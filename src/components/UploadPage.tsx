@@ -79,7 +79,7 @@ export const UploadPage = () => {
       }
 
       // Use a temporary merchant ID (in production, this would be the authenticated user's ID)
-      const merchantId = 'temp-merchant-001';
+      const merchantId = crypto.randomUUID();
 
       // Insert all products into database
       const productsWithElasticity = products.map(p => ({

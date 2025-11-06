@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Loader2, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { Loader2, CheckCircle, Clock, AlertCircle, ArrowLeft } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -96,8 +97,19 @@ export default function ProcessingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-subtle flex items-center justify-center p-4">
-      <Card className="w-full max-w-2xl p-8 shadow-elegant">
+    <div className="min-h-screen bg-gradient-subtle p-4">
+      <div className="max-w-2xl mx-auto pt-8">
+        {/* Back Button */}
+        <Button
+          variant="outline"
+          onClick={() => navigate('/')}
+          className="mb-6"
+        >
+          <ArrowLeft className="w-4 h-4 mr-2" />
+          Back to Upload
+        </Button>
+
+        <Card className="w-full p-8 shadow-elegant">
         <div className="text-center mb-8">
           <Loader2 className="w-16 h-16 mx-auto mb-4 text-primary animate-spin" />
           <h1 className="text-3xl font-bold mb-2">Processing Your Data</h1>
@@ -155,7 +167,8 @@ export default function ProcessingPage() {
             </div>
           </div>
         </div>
-      </Card>
+        </Card>
+      </div>
     </div>
   );
 }
