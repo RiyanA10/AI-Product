@@ -28,19 +28,17 @@ export const parseExcelFile = async (file: File): Promise<{
         const data = e.target?.result;
         let jsonData: any[][];
         
-        // Check if file is CSV
-        if (file.name.endsWith('.csv')) {
-          const workbook = XLSX.read(data, { type: 'binary', raw: true });
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-        } else {
-          // Excel file
-          const workbook = XLSX.read(data, { type: 'binary' });
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-        }
+        const fileName = file.name.toLowerCase();
+        const isCSV = fileName.endsWith('.csv');
+        
+        // Parse file based on type
+        const workbook = XLSX.read(data, { 
+          type: 'binary',
+          raw: !isCSV // For CSV, don't use raw mode to handle text properly
+        });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
         
         const errors: ValidationError[] = [];
         const products: ProductData[] = [];

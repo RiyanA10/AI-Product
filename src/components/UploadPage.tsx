@@ -30,11 +30,12 @@ export const UploadPage = () => {
     setIsDragging(false);
     
     const files = Array.from(e.dataTransfer.files);
-    const dataFile = files.find(f => 
-      f.name.endsWith('.xlsx') || 
-      f.name.endsWith('.xls') || 
-      f.name.endsWith('.csv')
-    );
+    const dataFile = files.find(f => {
+      const fileName = f.name.toLowerCase();
+      return fileName.endsWith('.xlsx') || 
+             fileName.endsWith('.xls') || 
+             fileName.endsWith('.csv');
+    });
     
     if (dataFile) {
       await processFile(dataFile);
