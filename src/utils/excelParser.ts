@@ -26,17 +26,28 @@ export const parseExcelFile = async (file: File): Promise<{
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
-        const workbook = XLSX.read(data, { type: 'binary' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        let jsonData: any[][];
+        
+        // Check if file is CSV
+        if (file.name.endsWith('.csv')) {
+          const workbook = XLSX.read(data, { type: 'binary', raw: true });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        } else {
+          // Excel file
+          const workbook = XLSX.read(data, { type: 'binary' });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        }
         
         const errors: ValidationError[] = [];
         const products: ProductData[] = [];
         
         // Check for required columns (skip header row)
         if (jsonData.length < 2) {
-          errors.push({ row: 0, field: 'file', message: 'Excel file is empty or missing data rows' });
+          errors.push({ row: 0, field: 'file', message: 'File is empty or missing data rows' });
           resolve({ data: [], errors });
           return;
         }
@@ -122,7 +133,7 @@ export const parseExcelFile = async (file: File): Promise<{
       } catch (error) {
         resolve({ 
           data: [], 
-          errors: [{ row: 0, field: 'file', message: 'Failed to parse Excel file. Please ensure it follows the template format.' }]
+          errors: [{ row: 0, field: 'file', message: 'Failed to parse file. Please ensure it follows the template format.' }]
         });
       }
     };

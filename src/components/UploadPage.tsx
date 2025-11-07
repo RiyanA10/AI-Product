@@ -30,14 +30,18 @@ export const UploadPage = () => {
     setIsDragging(false);
     
     const files = Array.from(e.dataTransfer.files);
-    const excelFile = files.find(f => f.name.endsWith('.xlsx') || f.name.endsWith('.xls'));
+    const dataFile = files.find(f => 
+      f.name.endsWith('.xlsx') || 
+      f.name.endsWith('.xls') || 
+      f.name.endsWith('.csv')
+    );
     
-    if (excelFile) {
-      await processFile(excelFile);
+    if (dataFile) {
+      await processFile(dataFile);
     } else {
       toast({
         title: 'Invalid file',
-        description: 'Please upload an Excel file (.xlsx or .xls)',
+        description: 'Please upload an Excel file (.xlsx, .xls) or CSV file (.csv)',
         variant: 'destructive',
       });
     }
@@ -166,7 +170,7 @@ export const UploadPage = () => {
           >
             <input
               type="file"
-              accept=".xlsx,.xls"
+              accept=".xlsx,.xls,.csv"
               onChange={handleFileSelect}
               className="hidden"
               id="file-upload"
@@ -175,13 +179,13 @@ export const UploadPage = () => {
             <label htmlFor="file-upload" className="cursor-pointer">
               <Upload className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
               <p className="text-lg font-medium mb-2">
-                {isProcessing ? 'Processing...' : 'Drag & Drop Excel File Here'}
+                {isProcessing ? 'Processing...' : 'Drag & Drop Excel or CSV File Here'}
               </p>
               <p className="text-sm text-muted-foreground mb-4">
                 or click to browse
               </p>
               <p className="text-xs text-muted-foreground">
-                Supported: .xlsx, .xls (Max 5MB)
+                Supported: .xlsx, .xls, .csv (Max 5MB)
               </p>
             </label>
           </div>
