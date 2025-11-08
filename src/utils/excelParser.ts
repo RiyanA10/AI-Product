@@ -147,6 +147,40 @@ export const generateExcelTemplate = () => {
   ];
   
   const ws = XLSX.utils.aoa_to_sheet(template);
+  
+  // Add data validation for category column (B)
+  ws['!dataValidation'] = {
+    B2: {
+      type: 'list',
+      allowBlank: false,
+      formula1: `"${ALLOWED_CATEGORIES.join(',')}"`,
+      showDropDown: true,
+      showErrorMessage: true,
+      errorTitle: 'Invalid Category',
+      error: 'You must select a category from the dropdown list.',
+      showInputMessage: true,
+      promptTitle: 'Select Category',
+      prompt: 'Choose from the dropdown list. No custom entries allowed.'
+    }
+  };
+  
+  // Add data validation for currency column (F)
+  ws['!dataValidation'] = {
+    ...ws['!dataValidation'],
+    F2: {
+      type: 'list',
+      allowBlank: false,
+      formula1: '"SAR,USD"',
+      showDropDown: true,
+      showErrorMessage: true,
+      errorTitle: 'Invalid Currency',
+      error: 'You must select either SAR or USD.',
+      showInputMessage: true,
+      promptTitle: 'Select Currency',
+      prompt: 'Choose SAR or USD from the dropdown.'
+    }
+  };
+  
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Products');
   

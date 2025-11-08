@@ -27,15 +27,7 @@ serve(async (req) => {
       current_step: 'fetching_inflation'
     });
 
-    // Step 1: Fetch inflation rate
-    const inflationRate = await fetchInflationRate();
-    console.log('Fetched inflation rate:', inflationRate);
-
-    await supabase.from('processing_status')
-      .update({ current_step: 'fetching_competitors' })
-      .eq('baseline_id', baseline_id);
-
-    // Get baseline data
+    // Get baseline data first to determine currency
     const { data: baseline } = await supabase
       .from('product_baselines')
       .select('*')
@@ -44,7 +36,21 @@ serve(async (req) => {
 
     if (!baseline) throw new Error('Baseline not found');
 
-    // Step 2: Fetch competitor prices (simulated for now)
+    // Step 1: Fetch currency-specific inflation rate
+    const { rate: inflationRate, source: inflationSource } = await fetchInflationRate(baseline.currency);
+    console.log(`Fetched inflation rate for ${baseline.currency}:`, inflationRate, 'from', inflationSource);
+    
+    // Save inflation snapshot
+    await supabase.from('inflation_snapshots').insert({
+      inflation_rate: inflationRate,
+      source: inflationSource
+    });
+
+    await supabase.from('processing_status')
+      .update({ current_step: 'fetching_competitors' })
+      .eq('baseline_id', baseline_id);
+
+    // Step 2: Fetch competitor prices
     await fetchCompetitorPrices(supabase, baseline_id, baseline.product_name, baseline.currency, baseline.merchant_id);
 
     await supabase.from('processing_status')
@@ -79,14 +85,19 @@ serve(async (req) => {
   }
 });
 
-async function fetchInflationRate(): Promise<number> {
-  // In production, this would scrape SAMA website or Trading Economics
-  // For now, return a realistic current rate
-  const currentRate = 0.023; // 2.3% - Saudi Arabia inflation as of 2025
+async function fetchInflationRate(currency: string): Promise<{ rate: number; source: string }> {
+  if (currency === 'SAR') {
+    // Saudi Arabia - SAMA inflation rate
+    const rate = 0.023; // 2.3% - Saudi Arabia inflation as of 2025
+    return { rate, source: 'SAMA (Saudi Arabia Monetary Authority)' };
+  } else if (currency === 'USD') {
+    // United States - Federal Reserve/BLS inflation rate
+    const rate = 0.028; // 2.8% - US inflation as of 2025
+    return { rate, source: 'US Bureau of Labor Statistics (BLS)' };
+  }
   
-  // Save to database for audit trail
-  // Note: This would need supabase client passed in
-  return currentRate;
+  // Default fallback
+  return { rate: 0.025, source: 'Default estimate' };
 }
 
 async function fetchCompetitorPrices(

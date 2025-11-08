@@ -15,6 +15,8 @@ export default function ResultsPage() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<any>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
 
   useEffect(() => {
     if (baselineId) {
@@ -60,6 +62,43 @@ export default function ResultsPage() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRefreshCompetitors = async () => {
+    if (!baselineId) return;
+    
+    setIsRefreshing(true);
+    
+    try {
+      const { data: functionData, error: functionError } = await supabase.functions.invoke('refresh-competitors', {
+        body: { baseline_id: baselineId }
+      });
+
+      if (functionError) throw functionError;
+
+      if (functionData.success) {
+        setLastRefreshed(functionData.refreshed_at);
+        
+        toast({
+          title: 'Success',
+          description: 'Competitor prices refreshed successfully!',
+        });
+        
+        // Reload page data
+        await loadResults();
+      } else {
+        throw new Error('Failed to refresh competitor prices');
+      }
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to refresh competitor data. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsRefreshing(false);
     }
   };
 
@@ -262,9 +301,13 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
             </div>
             
             <div className="p-4 bg-muted/30 rounded-lg">
-              <p className="text-sm text-muted-foreground mb-1">SAMA Inflation Rate</p>
+              <p className="text-sm text-muted-foreground mb-1">
+                {baseline.currency === 'SAR' ? 'SAMA' : 'US Federal'} Inflation Rate
+              </p>
               <p className="text-xl font-bold">{(results.inflation_rate * 100).toFixed(2)}%</p>
-              <p className="text-xs text-muted-foreground mt-1">Current rate</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {baseline.currency === 'SAR' ? 'Saudi Arabia' : 'United States'}
+              </p>
             </div>
             
             <div className="p-4 bg-muted/30 rounded-lg">
@@ -391,9 +434,15 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
           <Button size="lg" className="flex-1 sm:flex-none">
             Apply Suggested Price
           </Button>
-          <Button size="lg" variant="outline" className="flex-1 sm:flex-none">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh Competitor Data
+          <Button 
+            size="lg" 
+            variant="outline" 
+            className="flex-1 sm:flex-none"
+            onClick={handleRefreshCompetitors}
+            disabled={isRefreshing}
+          >
+            <RefreshCw className={`w-4 h-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh Competitor Data'}
           </Button>
           <Button size="lg" variant="outline" className="flex-1 sm:flex-none" onClick={exportToCSV}>
             <Download className="w-4 h-4 mr-2" />
