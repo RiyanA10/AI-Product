@@ -430,7 +430,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
         )}
 
         {/* Action Buttons */}
-        <div className="flex flex-wrap gap-4">
+        <div className="flex flex-wrap gap-4 mb-8">
           <Button size="lg" className="flex-1 sm:flex-none">
             Apply Suggested Price
           </Button>
@@ -449,6 +449,18 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
             Export Report (CSV)
           </Button>
         </div>
+
+        {/* Footer */}
+        <footer className="text-center py-8 border-t border-border/50 mt-8">
+          <p className="text-sm text-muted-foreground mb-2">
+            © 2025 AI Truest, Saudi Arabia. All Rights Reserved.
+          </p>
+          <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
+            <span>📩 info@paybacksa.com</span>
+            <span>•</span>
+            <span>📍 Riyadh, Saudi Arabia</span>
+          </div>
+        </footer>
       </div>
     </div>
   );
