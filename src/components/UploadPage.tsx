@@ -233,6 +233,18 @@ export const UploadPage = () => {
               </AlertDescription>
             </Alert>
           </div>
+
+          {/* Footer */}
+          <footer className="text-center py-8 border-t border-border/50 mt-8">
+            <p className="text-sm text-muted-foreground mb-2">
+              © 2025 AI Truest, Saudi Arabia. All Rights Reserved.
+            </p>
+            <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
+              <span>📩 info@paybacksa.com</span>
+              <span>•</span>
+              <span>📍 Riyadh, Saudi Arabia</span>
+            </div>
+          </footer>
         </Card>
       </div>
     </div>
