@@ -1,4 +1,1 @@
 project_id = "vysewjocqjndkagngeum"
-
-[functions.process-pricing]
-verify_jwt = false

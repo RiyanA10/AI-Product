@@ -1,10 +1,17 @@
+import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Input validation schema
+const RequestSchema = z.object({
+  baseline_id: z.string().uuid('Invalid baseline ID format')
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -12,11 +19,50 @@ serve(async (req) => {
   }
 
   try {
-    const { baseline_id } = await req.json();
-    
+    // Verify authentication
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: {
+        headers: { Authorization: authHeader }
+      }
+    });
+
+    // Get authenticated user
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Validate input
+    const body = await req.json();
+    const validation = RequestSchema.safeParse(body);
+    
+    if (!validation.success) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid input', 
+          details: validation.error.issues 
+        }), 
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    const { baseline_id } = validation.data;
 
     console.log('Starting pricing processing for baseline:', baseline_id);
 
@@ -27,14 +73,27 @@ serve(async (req) => {
       current_step: 'fetching_inflation'
     });
 
-    // Get baseline data first to determine currency
-    const { data: baseline } = await supabase
+    // Get baseline data first to verify ownership and get currency
+    const { data: baseline, error: baselineError } = await supabase
       .from('product_baselines')
       .select('*')
       .eq('id', baseline_id)
       .single();
 
-    if (!baseline) throw new Error('Baseline not found');
+    if (baselineError || !baseline) {
+      return new Response(JSON.stringify({ error: 'Baseline not found' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Verify ownership
+    if (baseline.merchant_id !== user.id) {
+      return new Response(JSON.stringify({ error: 'Forbidden: Not your baseline' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     // Step 1: Fetch currency-specific inflation rate
     const { rate: inflationRate, source: inflationSource } = await fetchInflationRate(baseline.currency);
@@ -77,7 +136,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('Error in process-pricing:', error);
     return new Response(JSON.stringify({ 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+      error: 'Internal server error'
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -87,16 +146,13 @@ serve(async (req) => {
 
 async function fetchInflationRate(currency: string): Promise<{ rate: number; source: string }> {
   if (currency === 'SAR') {
-    // Saudi Arabia - SAMA inflation rate
-    const rate = 0.023; // 2.3% - Saudi Arabia inflation as of 2025
+    const rate = 0.023;
     return { rate, source: 'SAMA (Saudi Arabia Monetary Authority)' };
   } else if (currency === 'USD') {
-    // United States - Federal Reserve/BLS inflation rate
-    const rate = 0.028; // 2.8% - US inflation as of 2025
+    const rate = 0.028;
     return { rate, source: 'US Bureau of Labor Statistics (BLS)' };
   }
   
-  // Default fallback
   return { rate: 0.025, source: 'Default estimate' };
 }
 
@@ -111,10 +167,7 @@ async function fetchCompetitorPrices(
     ? ['amazon', 'noon', 'extra', 'jarir']
     : ['amazon', 'walmart', 'ebay', 'target'];
 
-  // Simulate competitor price fetching
-  // In production, this would use web scraping
   for (const marketplace of marketplaces) {
-    // Simulate realistic competitor prices
     const basePrice = 45 + Math.random() * 20;
     const variance = basePrice * 0.15;
     
@@ -156,7 +209,6 @@ async function calculateOptimalPrice(
     merchant_id
   } = baseline;
 
-  // Get competitor data
   const { data: competitorData } = await supabase
     .from('competitor_prices')
     .select('*')
@@ -165,20 +217,17 @@ async function calculateOptimalPrice(
 
   const marketStats = calculateMarketStats(competitorData || []);
   
-  // Inflation adjustment
   const inflationAdjustment = 1 + inflationRate;
   
-  // Competitor factor
   let competitorFactor = 1.0;
   if (marketStats.average) {
     if (current_price < marketStats.average * 0.95) {
-      competitorFactor = 1.1; // More elastic (you're cheaper)
+      competitorFactor = 1.1;
     } else if (current_price > marketStats.average * 1.05) {
-      competitorFactor = 0.9; // Less elastic (you're premium)
+      competitorFactor = 0.9;
     }
   }
   
-  // Elasticity calibration loop
   let adjustedElasticity = base_elasticity * inflationAdjustment * competitorFactor;
   let optimalPrice = 0;
   let iterations = 0;
@@ -208,7 +257,6 @@ async function calculateOptimalPrice(
     iterations++;
   }
   
-  // Final price decision
   let suggestedPrice = optimalPrice;
   let warning = null;
   
@@ -222,7 +270,6 @@ async function calculateOptimalPrice(
     }
   }
   
-  // Calculate profit projections
   const currentProfit = (current_price - cost_per_unit) * current_quantity;
   const b = Math.abs(adjustedElasticity) * (current_quantity / current_price);
   const a = current_quantity + (b * current_price);
@@ -236,7 +283,6 @@ async function calculateOptimalPrice(
     ? ((suggestedPrice - marketStats.average) / marketStats.average) * 100
     : null;
   
-  // Save results
   await supabase.from('pricing_results').insert({
     baseline_id,
     merchant_id,

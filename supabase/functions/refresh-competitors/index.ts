@@ -1,10 +1,16 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+
+// Input validation schema
+const RequestSchema = z.object({
+  baseline_id: z.string().uuid('Invalid baseline ID format')
+});
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -12,15 +18,52 @@ serve(async (req) => {
   }
 
   try {
-    const { baseline_id } = await req.json();
-    
+    // Verify authentication
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: {
+        headers: { Authorization: authHeader }
+      }
+    });
 
-    console.log('Refreshing competitor data for baseline:', baseline_id);
+    // Get authenticated user
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
-    // Get baseline data
+    // Validate input
+    const body = await req.json();
+    const validation = RequestSchema.safeParse(body);
+    
+    if (!validation.success) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'Invalid input', 
+          details: validation.error.issues 
+        }), 
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
+
+    const { baseline_id } = validation.data;
+    
+    // Get baseline data and verify ownership
     const { data: baseline, error: baselineError } = await supabase
       .from('product_baselines')
       .select('*')
@@ -28,10 +71,22 @@ serve(async (req) => {
       .single();
 
     if (baselineError || !baseline) {
-      throw new Error('Baseline not found');
+      return new Response(JSON.stringify({ error: 'Baseline not found' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (baseline.merchant_id !== user.id) {
+      return new Response(JSON.stringify({ error: 'Forbidden: Not your baseline' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     const { product_name, currency, merchant_id } = baseline;
+
+    console.log('Refreshing competitor data for baseline:', baseline_id);
 
     // Delete old competitor data
     await supabase
@@ -111,7 +166,7 @@ serve(async (req) => {
         results.push({
           marketplace: marketplace.name,
           status: 'failed',
-          error: error instanceof Error ? error.message : 'Unknown error'
+          error: 'Failed to fetch data'
         });
       }
     }
@@ -127,8 +182,7 @@ serve(async (req) => {
   } catch (error) {
     console.error('Error refreshing competitors:', error);
     return new Response(JSON.stringify({ 
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error' 
+      error: 'Internal server error'
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

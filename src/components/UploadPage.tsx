@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Upload, Download, AlertCircle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Upload, Download, AlertCircle, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -8,13 +8,21 @@ import { CATEGORY_ELASTICITY } from '@/utils/categoryElasticity';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
+import { User } from '@supabase/supabase-js';
 
 export const UploadPage = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errors, setErrors] = useState<ValidationError[]>([]);
+  const [user, setUser] = useState<User | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user);
+    });
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -83,8 +91,17 @@ export const UploadPage = () => {
         return;
       }
 
-      // Use a temporary merchant ID (in production, this would be the authenticated user's ID)
-      const merchantId = crypto.randomUUID();
+      // Use authenticated user's ID
+      if (!user) {
+        toast({
+          title: 'Authentication required',
+          description: 'Please sign in to upload products',
+          variant: 'destructive',
+        });
+        navigate('/auth');
+        return;
+      }
+      const merchantId = user.id;
 
       // Insert all products into database
       const productsWithElasticity = products.map(p => ({
@@ -127,17 +144,33 @@ export const UploadPage = () => {
     }
   };
 
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    navigate('/auth');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-subtle p-4 md:p-8">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl md:text-5xl font-bold mb-3 bg-gradient-primary bg-clip-text text-transparent">
-            AI TRUEST™
-          </h1>
-          <p className="text-xl text-muted-foreground">
-            Intelligent Pricing Optimization System
-          </p>
+        <div className="flex items-center justify-between mb-8">
+          <div className="text-center flex-1">
+            <h1 className="text-4xl md:text-5xl font-bold mb-3 bg-gradient-primary bg-clip-text text-transparent">
+              AI TRUEST™
+            </h1>
+            <p className="text-xl text-muted-foreground">
+              Intelligent Pricing Optimization System
+            </p>
+          </div>
+          <Button
+            onClick={handleSignOut}
+            variant="outline"
+            size="sm"
+            className="ml-4"
+          >
+            <LogOut className="w-4 h-4 mr-2" />
+            Sign Out
+          </Button>
         </div>
 
         <Card className="p-8 shadow-elegant">
