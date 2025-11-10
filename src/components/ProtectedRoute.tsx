@@ -15,50 +15,57 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkEmailVerification = async (userId: string) => {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('email_verified')
-        .eq('id', userId)
-        .single();
+    let mounted = true;
+
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
       
-      if (profile && !profile.email_verified) {
-        const { data: { user } } = await supabase.auth.getUser();
-        navigate(`/verify?email=${encodeURIComponent(user?.email || '')}`);
-      }
-    };
-
-    // Set up auth state listener FIRST
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (!session) {
-          navigate('/auth');
-        } else {
-          await checkEmailVerification(session.user.id);
-        }
-        
-        setLoading(false);
-      }
-    );
-
-    // THEN check for existing session
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+      if (!mounted) return;
       
       if (!session) {
         navigate('/auth');
-      } else {
-        await checkEmailVerification(session.user.id);
+        setLoading(false);
+        return;
+      }
+
+      // Check email verification
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email_verified')
+        .eq('id', session.user.id)
+        .single();
+      
+      if (!mounted) return;
+      
+      if (profile && !profile.email_verified) {
+        navigate(`/verify?email=${encodeURIComponent(session.user.email || '')}`);
       }
       
+      setSession(session);
+      setUser(session.user);
       setLoading(false);
-    });
+    };
 
-    return () => subscription.unsubscribe();
+    // Set up auth state listener for future changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (!mounted) return;
+        
+        if (event === 'SIGNED_OUT') {
+          navigate('/auth');
+        } else if (event === 'SIGNED_IN' && session) {
+          setSession(session);
+          setUser(session.user);
+        }
+      }
+    );
+
+    checkAuth();
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, [navigate]);
 
   if (loading) {
