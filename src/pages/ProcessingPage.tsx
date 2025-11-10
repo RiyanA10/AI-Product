@@ -115,10 +115,10 @@ export default function ProcessingPage() {
             <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping"></div>
             <Loader2 className="w-20 h-20 mx-auto text-primary animate-spin relative" />
           </div>
-          <h1 className="text-4xl font-bold mb-3 bg-gradient-primary bg-clip-text text-transparent">
+          <h1 className="text-4xl font-bold mb-3 text-primary">
             Processing Your Data
           </h1>
-          <p className="text-lg text-muted-foreground">
+          <p className="text-lg font-medium text-foreground">
             ✨ AI analysis in progress • Typically 30-60 seconds
           </p>
         </div>

@@ -156,14 +156,14 @@ export const UploadPage = () => {
         <div className="flex items-center justify-between mb-10 animate-slide-up">
           <div className="text-center flex-1">
             <div className="inline-flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center shadow-glow">
-                <span className="text-xl font-bold bg-gradient-primary bg-clip-text text-transparent">AT</span>
+              <div className="w-12 h-12 bg-primary rounded-xl flex items-center justify-center shadow-glow">
+                <span className="text-xl font-bold text-white">AT</span>
               </div>
-              <h1 className="text-5xl md:text-6xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+              <h1 className="text-5xl md:text-6xl font-bold text-primary">
                 AI TRUEST™
               </h1>
             </div>
-            <p className="text-xl md:text-2xl font-medium text-foreground/80">
+            <p className="text-xl md:text-2xl font-semibold text-foreground">
               Intelligent Pricing Optimization System
             </p>
           </div>
@@ -179,8 +179,8 @@ export const UploadPage = () => {
         </div>
 
         <Card className="p-8 md:p-10 shadow-elegant hover:shadow-glow transition-all duration-300 animate-scale-in backdrop-blur-sm bg-white/95">
-          <h2 className="text-3xl font-bold mb-8 flex items-center gap-3 bg-gradient-primary bg-clip-text text-transparent">
-            <div className="p-2 bg-gradient-primary rounded-lg">
+          <h2 className="text-3xl font-bold mb-8 flex items-center gap-3 text-foreground">
+            <div className="p-2 bg-primary rounded-lg shadow-md">
               <Upload className="w-6 h-6 text-white" />
             </div>
             Upload Your Product Data

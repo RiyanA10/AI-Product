@@ -126,10 +126,10 @@ const AuthPage = () => {
     <div className="min-h-screen flex items-center justify-center bg-gradient-hero p-4">
       <Card className="w-full max-w-md shadow-elegant animate-scale-in backdrop-blur-sm">
         <CardHeader className="space-y-3 text-center">
-          <div className="w-16 h-16 mx-auto bg-gradient-primary rounded-2xl flex items-center justify-center shadow-glow">
+          <div className="w-16 h-16 mx-auto bg-primary rounded-2xl flex items-center justify-center shadow-glow">
             <span className="text-2xl font-bold text-white">AT</span>
           </div>
-          <CardTitle className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+          <CardTitle className="text-3xl font-bold text-primary">
             AI TRUEST™
           </CardTitle>
           <CardDescription className="text-base">

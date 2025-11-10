@@ -147,10 +147,10 @@ const VerificationPage = () => {
     <div className="min-h-screen bg-gradient-hero flex items-center justify-center p-4">
       <Card className="w-full max-w-md shadow-elegant animate-scale-in">
         <CardHeader className="text-center space-y-4">
-          <div className="w-20 h-20 bg-gradient-primary rounded-full flex items-center justify-center mx-auto shadow-glow">
+          <div className="w-20 h-20 bg-primary rounded-full flex items-center justify-center mx-auto shadow-glow">
             <Mail className="w-10 h-10 text-white" />
           </div>
-          <CardTitle className="text-3xl font-bold bg-gradient-primary bg-clip-text text-transparent">
+          <CardTitle className="text-3xl font-bold text-primary">
             Verify Your Email
           </CardTitle>
           <CardDescription className="text-base">
