@@ -96,12 +96,26 @@ const VerificationPage = () => {
         });
         setTimeout(() => navigate('/auth'), 2000);
       } else {
-        setError(data.error || 'Invalid verification code');
+        const errorMsg = data.error || 'Invalid verification code';
+        setError(errorMsg);
+        
+        // If code expired, reset timer to 0
+        if (errorMsg.toLowerCase().includes('expired')) {
+          setTimeLeft(0);
+        }
+        
         setCode(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
       }
     } catch (error: any) {
-      setError(error.message || 'Verification failed. Please try again.');
+      const errorMsg = error.message || 'Verification failed. Please try again.';
+      setError(errorMsg);
+      
+      // If code expired, reset timer to 0
+      if (errorMsg.toLowerCase().includes('expired')) {
+        setTimeLeft(0);
+      }
+      
       setCode(['', '', '', '', '', '']);
       inputRefs.current[0]?.focus();
     } finally {
@@ -182,9 +196,45 @@ const VerificationPage = () => {
           </div>
           
           {error && (
-            <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg flex items-start gap-2">
-              <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-destructive">{error}</p>
+            <div className={`p-4 border-2 rounded-lg flex items-start gap-3 ${
+              error.toLowerCase().includes('expired') 
+                ? 'bg-orange-50 border-orange-300 dark:bg-orange-950/30 dark:border-orange-800' 
+                : 'bg-destructive/10 border-destructive/20'
+            }`}>
+              <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                error.toLowerCase().includes('expired') 
+                  ? 'text-orange-600 dark:text-orange-400' 
+                  : 'text-destructive'
+              }`} />
+              <div className="flex-1">
+                <p className={`text-sm font-medium ${
+                  error.toLowerCase().includes('expired') 
+                    ? 'text-orange-800 dark:text-orange-300' 
+                    : 'text-destructive'
+                }`}>
+                  {error}
+                </p>
+                {error.toLowerCase().includes('expired') && (
+                  <Button
+                    onClick={handleResendCode}
+                    disabled={loading}
+                    variant="outline"
+                    className="mt-3 w-full border-orange-300 text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:text-orange-300 dark:hover:bg-orange-900/30"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        Sending...
+                      </>
+                    ) : (
+                      <>
+                        <Mail className="w-4 h-4 mr-2" />
+                        Request New Code
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
           
