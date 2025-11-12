@@ -248,6 +248,7 @@ export type Database = {
           currency: string
           current_price: number
           current_quantity: number
+          deleted_at: string | null
           id: string
           merchant_id: string
           product_name: string
@@ -260,6 +261,7 @@ export type Database = {
           currency: string
           current_price: number
           current_quantity: number
+          deleted_at?: string | null
           id?: string
           merchant_id: string
           product_name: string
@@ -272,6 +274,7 @@ export type Database = {
           currency?: string
           current_price?: number
           current_quantity?: number
+          deleted_at?: string | null
           id?: string
           merchant_id?: string
           product_name?: string

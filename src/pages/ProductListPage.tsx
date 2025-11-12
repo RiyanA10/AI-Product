@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, TrendingDown, Search, Filter, Download } from 'lucide-react';
+import { ArrowLeft, TrendingUp, TrendingDown, Search, Filter, Download, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 
 interface ProductWithResults {
   id: string;
@@ -25,6 +26,11 @@ export default function ProductListPage() {
   const [products, setProducts] = useState<ProductWithResults[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [deleteDialog, setDeleteDialog] = useState<{ open: boolean; productId: string | null; productName: string }>({
+    open: false,
+    productId: null,
+    productName: '',
+  });
 
   useEffect(() => {
     loadProducts();
@@ -38,11 +44,12 @@ export default function ProductListPage() {
         return;
       }
 
-      // Get all product baselines
+      // Get all product baselines (exclude soft deleted)
       const { data: baselines, error: baselinesError } = await supabase
         .from('product_baselines')
         .select('*')
         .eq('merchant_id', user.id)
+        .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
       if (baselinesError) throw baselinesError;
@@ -92,6 +99,38 @@ export default function ProductListPage() {
     p.product_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     p.category.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const handleDeleteClick = (e: React.MouseEvent, productId: string, productName: string) => {
+    e.stopPropagation();
+    setDeleteDialog({ open: true, productId, productName });
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteDialog.productId) return;
+
+    try {
+      const { error } = await supabase
+        .from('product_baselines')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', deleteDialog.productId);
+
+      if (error) throw error;
+
+      toast({
+        title: 'Success',
+        description: 'Product archived successfully',
+      });
+
+      loadProducts();
+    } catch (error) {
+      console.error('Failed to delete product:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to archive product',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -167,11 +206,12 @@ export default function ProductListPage() {
         <div className="hidden md:block">
           <Card className="overflow-hidden">
             <div className="bg-muted/50 px-4 lg:px-6 py-3 lg:py-4 font-semibold text-xs lg:text-sm grid grid-cols-12 gap-2 lg:gap-4">
-              <div className="col-span-3 lg:col-span-4">Product Name</div>
+              <div className="col-span-3 lg:col-span-3">Product Name</div>
               <div className="col-span-2 text-center">Current</div>
               <div className="col-span-2 text-center">Optimal</div>
-              <div className="col-span-3 lg:col-span-2 text-center">Potential</div>
+              <div className="col-span-2 text-center">Potential</div>
               <div className="col-span-2 text-center">Status</div>
+              <div className="col-span-1 text-center">Actions</div>
             </div>
 
             <div className="divide-y">
@@ -187,7 +227,7 @@ export default function ProductListPage() {
                     onClick={() => navigate(`/results/${product.id}`)}
                     className="px-4 lg:px-6 py-3 lg:py-4 hover:bg-muted/30 cursor-pointer transition-colors grid grid-cols-12 gap-2 lg:gap-4 items-center"
                   >
-                    <div className="col-span-3 lg:col-span-4 min-w-0">
+                    <div className="col-span-3 min-w-0">
                       <p className="font-semibold text-foreground text-sm lg:text-base truncate">{product.product_name}</p>
                       <p className="text-xs lg:text-sm text-muted-foreground truncate">{product.category}</p>
                     </div>
@@ -213,7 +253,7 @@ export default function ProductListPage() {
                         <span className="text-muted-foreground text-xs">Processing...</span>
                       )}
                     </div>
-                    <div className="col-span-3 lg:col-span-2 text-center">
+                    <div className="col-span-2 text-center">
                       {product.profit_increase ? (
                         <p className="font-semibold text-success text-xs lg:text-sm">+{product.currency} {product.profit_increase.toFixed(0)}/mo</p>
                       ) : (
@@ -222,6 +262,16 @@ export default function ProductListPage() {
                     </div>
                     <div className="col-span-2 text-center flex justify-center">
                       {getStatusBadge(product.status)}
+                    </div>
+                    <div className="col-span-1 text-center">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => handleDeleteClick(e, product.id, product.product_name)}
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
                     </div>
                   </div>
                 );
@@ -249,8 +299,16 @@ export default function ProductListPage() {
                     <h3 className="font-semibold text-foreground text-sm sm:text-base mb-1 truncate">{product.product_name}</h3>
                     <p className="text-xs sm:text-sm text-muted-foreground truncate">{product.category}</p>
                   </div>
-                  <div className="flex-shrink-0">
+                  <div className="flex items-center gap-2 flex-shrink-0">
                     {getStatusBadge(product.status)}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => handleDeleteClick(e, product.id, product.product_name)}
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
                 </div>
 
@@ -294,6 +352,16 @@ export default function ProductListPage() {
           </Card>
         )}
       </div>
+
+      <ConfirmDialog
+        open={deleteDialog.open}
+        onClose={() => setDeleteDialog({ open: false, productId: null, productName: '' })}
+        onConfirm={handleDeleteConfirm}
+        title="Archive Product"
+        description={`Are you sure you want to archive "${deleteDialog.productName}"? This product will be preserved for AI analysis but removed from your active product list.`}
+        confirmText="Archive"
+        variant="destructive"
+      />
     </div>
   );
 }
