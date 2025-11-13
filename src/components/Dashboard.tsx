@@ -23,6 +23,8 @@ const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [opportunities, setOpportunities] = useState<any[]>([]);
   const [chartData, setChartData] = useState<any[]>([]);
+  const [baselines, setBaselines] = useState<any[]>([]);
+  const [pricingResults, setPricingResults] = useState<any[]>([]);
 
   useEffect(() => {
     fetchDashboardData();
@@ -40,11 +42,14 @@ const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
         .eq('merchant_id', user.id)
         .is('deleted_at', null);
 
-      // Fetch pricing results
+      // Only fetch pricing results for non-deleted products
+      const activeBaselineIds = baselines?.map(b => b.id) || [];
+      
       const { data: pricingResults } = await supabase
         .from('pricing_results')
         .select('*')
-        .eq('merchant_id', user.id);
+        .eq('merchant_id', user.id)
+        .in('baseline_id', activeBaselineIds.length > 0 ? activeBaselineIds : ['00000000-0000-0000-0000-000000000000']);
 
       // Calculate metrics
       const totalProducts = baselines?.length || 0;
@@ -107,6 +112,8 @@ const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
       setAlerts(newAlerts);
       setOpportunities(topOpportunities);
       setChartData(chartDataPoints);
+      setBaselines(baselines || []);
+      setPricingResults(pricingResults || []);
       setLoading(false);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -310,8 +317,49 @@ const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
             <CardDescription>Your pricing compared to competitors</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="h-48 flex items-center justify-center bg-muted/30 rounded-lg">
-              <p className="text-muted-foreground">Chart will display market positioning analysis</p>
+            <div className="space-y-4">
+              {pricingResults && pricingResults.length > 0 ? (
+                pricingResults.slice(0, 5).map((result) => {
+                  const baseline = baselines?.find(b => b.id === result.baseline_id);
+                  const marketPosition = Number(result.position_vs_market) || 0;
+                  const isCompetitive = marketPosition >= -10 && marketPosition <= 10;
+                  
+                  return (
+                    <div key={result.id} className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-medium text-foreground">
+                          {baseline?.product_name || 'Unknown Product'}
+                        </span>
+                        <span className={`text-sm font-semibold ${
+                          marketPosition > 10 ? 'text-destructive' : 
+                          marketPosition < -10 ? 'text-success' : 
+                          'text-warning'
+                        }`}>
+                          {marketPosition > 0 ? '+' : ''}{marketPosition.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="relative h-2 bg-muted rounded-full overflow-hidden">
+                        <div 
+                          className={`absolute h-full transition-all ${
+                            isCompetitive ? 'bg-success' : 
+                            marketPosition > 0 ? 'bg-destructive' : 
+                            'bg-primary'
+                          }`}
+                          style={{ 
+                            width: `${Math.min(Math.abs(marketPosition), 100)}%`,
+                            left: marketPosition > 0 ? '50%' : `${50 - Math.min(Math.abs(marketPosition), 50)}%`
+                          }}
+                        />
+                        <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-border" />
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="h-48 flex items-center justify-center bg-muted/30 rounded-lg">
+                  <p className="text-muted-foreground">No market position data available</p>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
