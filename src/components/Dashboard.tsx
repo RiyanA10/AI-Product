@@ -86,8 +86,21 @@ const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
           };
         }) || [];
 
-      // Create alerts from warnings
-      const newAlerts = productsWithWarnings.slice(0, 5).map((result, index) => {
+      // Create alerts from warnings - deduplicate by baseline_id
+      const uniqueWarnings = productsWithWarnings.reduce((acc: any[], result) => {
+        const existingIndex = acc.findIndex(r => r.baseline_id === result.baseline_id);
+        if (existingIndex === -1) {
+          acc.push(result);
+        } else {
+          // Keep the most recent warning for each product
+          if (new Date(result.created_at) > new Date(acc[existingIndex].created_at)) {
+            acc[existingIndex] = result;
+          }
+        }
+        return acc;
+      }, []);
+
+      const newAlerts = uniqueWarnings.slice(0, 5).map((result, index) => {
         const baseline = baselines?.find(b => b.id === result.baseline_id);
         return {
           id: index + 1,
@@ -342,40 +355,87 @@ const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
             <CardDescription>Your pricing compared to competitors</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
+            <div className="space-y-3">
               {pricingResults && pricingResults.length > 0 ? (
                 pricingResults.slice(0, 5).map((result) => {
                   const baseline = baselines?.find(b => b.id === result.baseline_id);
                   const marketPosition = Number(result.position_vs_market) || 0;
-                  const isCompetitive = marketPosition >= -10 && marketPosition <= 10;
+                  const currentPrice = Number(baseline?.current_price) || 0;
+                  const marketAvg = Number(result.market_average) || 0;
+                  const marketLow = Number(result.market_lowest) || 0;
+                  const marketHigh = Number(result.market_highest) || 0;
+                  
+                  const isUnderpriced = marketPosition < -10;
+                  const isOverpriced = marketPosition > 10;
+                  const isCompetitive = !isUnderpriced && !isOverpriced;
                   
                   return (
-                    <div key={result.id} className="space-y-2">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-medium text-foreground">
-                          {baseline?.product_name || 'Unknown Product'}
-                        </span>
-                        <span className={`text-sm font-semibold ${
-                          marketPosition > 10 ? 'text-destructive' : 
-                          marketPosition < -10 ? 'text-success' : 
-                          'text-warning'
+                    <div 
+                      key={result.id} 
+                      className={`p-4 rounded-lg border transition-all hover:shadow-md ${
+                        isCompetitive ? 'bg-success/5 border-success/30' :
+                        isOverpriced ? 'bg-destructive/5 border-destructive/30' :
+                        'bg-primary/5 border-primary/30'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-foreground mb-1">
+                            {baseline?.product_name || 'Unknown Product'}
+                          </h4>
+                          <p className="text-xs text-muted-foreground">
+                            {isCompetitive && '✓ Competitively priced'}
+                            {isOverpriced && '⚠ Above market average'}
+                            {isUnderpriced && '↗ Underpriced opportunity'}
+                          </p>
+                        </div>
+                        <div className={`text-right ml-4 ${
+                          isOverpriced ? 'text-destructive' :
+                          isUnderpriced ? 'text-primary' :
+                          'text-success'
                         }`}>
-                          {marketPosition > 0 ? '+' : ''}{marketPosition.toFixed(1)}%
-                        </span>
+                          <div className="text-lg font-bold">
+                            {marketPosition > 0 ? '+' : ''}{marketPosition.toFixed(1)}%
+                          </div>
+                          <div className="text-xs opacity-70">vs market</div>
+                        </div>
                       </div>
-                      <div className="relative h-2 bg-muted rounded-full overflow-hidden">
-                        <div 
-                          className={`absolute h-full transition-all ${
-                            isCompetitive ? 'bg-success' : 
-                            marketPosition > 0 ? 'bg-destructive' : 
-                            'bg-primary'
-                          }`}
-                          style={{ 
-                            width: `${Math.min(Math.abs(marketPosition), 100)}%`,
-                            left: marketPosition > 0 ? '50%' : `${50 - Math.min(Math.abs(marketPosition), 50)}%`
-                          }}
-                        />
-                        <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-border" />
+                      
+                      {/* Visual price comparison */}
+                      <div className="relative">
+                        <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                          <span>Low: {marketLow.toFixed(2)}</span>
+                          <span>Avg: {marketAvg.toFixed(2)}</span>
+                          <span>High: {marketHigh.toFixed(2)}</span>
+                        </div>
+                        <div className="relative h-3 bg-gradient-to-r from-success/20 via-warning/20 to-destructive/20 rounded-full overflow-hidden">
+                          {/* Market range indicator */}
+                          <div className="absolute inset-0 flex items-center">
+                            <div 
+                              className="absolute h-full w-1 bg-foreground/20"
+                              style={{ left: '33%' }}
+                            />
+                            <div 
+                              className="absolute h-full w-1 bg-foreground/20"
+                              style={{ left: '66%' }}
+                            />
+                          </div>
+                          {/* Current price indicator */}
+                          {marketLow > 0 && marketHigh > 0 && (
+                            <div 
+                              className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-foreground border-2 border-background shadow-lg"
+                              style={{ 
+                                left: `${Math.max(0, Math.min(100, ((currentPrice - marketLow) / (marketHigh - marketLow)) * 100))}%`,
+                                transform: 'translateX(-50%) translateY(-50%)'
+                              }}
+                            />
+                          )}
+                        </div>
+                        <div className="flex justify-center mt-1">
+                          <span className="text-xs font-medium text-foreground">
+                            Your price: {currentPrice.toFixed(2)} {baseline?.currency}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   );
