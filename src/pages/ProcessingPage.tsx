@@ -32,8 +32,8 @@ export default function ProcessingPage() {
     // Start processing automatically
     startProcessing();
 
-    // Poll for status updates
-    const interval = setInterval(checkProcessingStatus, 2000);
+    // Poll for status updates - reduced frequency for better performance
+    const interval = setInterval(checkProcessingStatus, 1000);
 
     return () => clearInterval(interval);
   }, [baselineId]);

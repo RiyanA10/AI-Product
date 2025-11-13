@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/integrations/supabase/client';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { useToast } from '@/hooks/use-toast';
 
 interface DashboardProps {
   onNavigateToUpload: () => void;
@@ -13,6 +14,7 @@ interface DashboardProps {
 
 const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [metrics, setMetrics] = useState({
     profitIncrease: 0,
@@ -155,6 +157,24 @@ const Dashboard = ({ onNavigateToUpload }: DashboardProps) => {
               <Button onClick={() => navigate('/products')} variant="outline" className="flex items-center gap-2">
                 <Package className="w-4 h-4" />
                 View All Products
+              </Button>
+              <Button 
+                onClick={() => {
+                  if (baselines.length > 0) {
+                    navigate(`/results/${baselines[0].id}`);
+                  } else {
+                    toast({
+                      title: 'No Products',
+                      description: 'Please upload products first',
+                      variant: 'destructive',
+                    });
+                  }
+                }}
+                variant="outline" 
+                className="flex items-center gap-2"
+              >
+                <Target className="w-4 h-4" />
+                Product Analysis
               </Button>
               <Button onClick={() => navigate('/competitive-intelligence')} variant="outline" className="flex items-center gap-2">
                 <Target className="w-4 h-4" />

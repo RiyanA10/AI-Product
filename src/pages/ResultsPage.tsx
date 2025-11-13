@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, TrendingUp, TrendingDown, RefreshCw, Download } from 'lucide-react';
+import { ArrowLeft, TrendingUp, TrendingDown, RefreshCw, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,12 +17,46 @@ export default function ResultsPage() {
   const [data, setData] = useState<any>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshed, setLastRefreshed] = useState<string | null>(null);
+  const [allBaselines, setAllBaselines] = useState<any[]>([]);
+  const [currentIndex, setCurrentIndex] = useState<number>(0);
 
   useEffect(() => {
     if (baselineId) {
+      loadAllBaselines();
       loadResults();
     }
   }, [baselineId]);
+
+  const loadAllBaselines = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: baselines, error } = await supabase
+        .from('product_baselines')
+        .select('id, product_name')
+        .eq('merchant_id', user.id)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      if (baselines) {
+        setAllBaselines(baselines);
+        const index = baselines.findIndex(b => b.id === baselineId);
+        setCurrentIndex(index >= 0 ? index : 0);
+      }
+    } catch (error) {
+      console.error('Failed to load baselines:', error);
+    }
+  };
+
+  const navigateToProduct = (direction: 'prev' | 'next') => {
+    const newIndex = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
+    if (newIndex >= 0 && newIndex < allBaselines.length) {
+      navigate(`/results/${allBaselines[newIndex].id}`);
+    }
+  };
 
   const loadResults = async () => {
     try {
@@ -184,21 +218,49 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6 animate-slide-up">
-          <div className="flex items-center gap-3 mb-4">
-            <Button
-              variant="outline"
-              onClick={() => navigate('/products')}
-              className="hover:shadow-lg transition-all"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back to Products
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => navigate('/')}
-            >
-              Dashboard
-            </Button>
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                onClick={() => navigate('/products')}
+                className="hover:shadow-lg transition-all"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Products
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => navigate('/')}
+              >
+                Dashboard
+              </Button>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => navigateToProduct('prev')}
+                disabled={currentIndex === 0}
+                variant="outline"
+                size="sm"
+                className="gap-1"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground px-3 font-medium">
+                {currentIndex + 1} / {allBaselines.length}
+              </span>
+              <Button
+                onClick={() => navigateToProduct('next')}
+                disabled={currentIndex === allBaselines.length - 1}
+                variant="outline"
+                size="sm"
+                className="gap-1"
+              >
+                Next
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
           
           <div className="flex items-center justify-between flex-wrap gap-4">
