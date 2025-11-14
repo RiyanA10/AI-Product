@@ -192,6 +192,29 @@ async function fetchInflationRate(currency: string): Promise<{ rate: number; sou
   };
 }
 
+function simplifyProductName(productName: string): string {
+  // Remove common specifications and details that might not match across marketplaces
+  let simplified = productName;
+  
+  // Remove detailed specs (anything after commas)
+  simplified = simplified.split(',')[0].trim();
+  
+  // Remove size/storage/color info in parentheses or after dashes
+  simplified = simplified.replace(/\([^)]*\)/g, '').trim();
+  simplified = simplified.replace(/\s*-\s*.*/g, '').trim();
+  
+  // Remove common spec keywords  
+  const removePatterns = [/5G/gi, /4G/gi, /LTE/gi, /WiFi/gi, /Bluetooth/gi, /\d+GB/gi, /\d+\.\d+\s*inch/gi];
+  removePatterns.forEach(pattern => {
+    simplified = simplified.replace(pattern, '').trim();
+  });
+  
+  // Clean up extra spaces
+  simplified = simplified.replace(/\s+/g, ' ').trim();
+  
+  return simplified;
+}
+
 async function scrapeMarketplacePrices(url: string, marketplace: string): Promise<number[]> {
   const zenrowsApiKey = Deno.env.get('ZENROWS_API_KEY');
   
@@ -292,21 +315,36 @@ async function scrapeMarketplacePrices(url: string, marketplace: string): Promis
     if (prices.length === 0) {
       console.log(`Selector-based extraction failed, trying text-based extraction for ${marketplace}`);
       const bodyText = doc.body?.textContent || '';
-      const pricePattern = /(?:SAR|SR|ر\.س\.?|USD|$)\s*[\d,]+\.?\d{0,2}/gi;
-      const matches = bodyText.match(pricePattern);
       
-      if (matches) {
-        console.log(`Found ${matches.length} potential price matches in body text`);
-        matches.forEach((match) => {
-          const numMatch = match.match(/[\d,]+\.?\d*/);
-          if (numMatch) {
-            const price = parseFloat(numMatch[0].replace(/,/g, ''));
-            if (price > 100 && price < 100000) { // Reasonable price range
-              prices.push(price);
-            }
+      // More aggressive price patterns for SAR and USD
+      const pricePatterns = [
+        /(?:SAR|SR|ر\.س\.?)\s*[\d,]+\.?\d{0,2}/gi,  // SAR with prefix
+        /[\d,]+\.?\d{0,2}\s*(?:SAR|SR|ر\.س\.?)/gi,  // SAR with suffix
+        /\$\s*[\d,]+\.?\d{0,2}/gi,                  // USD
+        /[\d,]{3,}\.?\d{0,2}/g                       // Plain numbers (3+ digits)
+      ];
+      
+      const allMatches: string[] = [];
+      pricePatterns.forEach(pattern => {
+        const matches = bodyText.match(pattern);
+        if (matches) {
+          allMatches.push(...matches);
+        }
+      });
+      
+      console.log(`Found ${allMatches.length} potential price matches in body text`);
+      
+      allMatches.forEach((match) => {
+        const numMatch = match.match(/[\d,]+\.?\d*/);
+        if (numMatch) {
+          const price = parseFloat(numMatch[0].replace(/,/g, ''));
+          if (price > 100 && price < 100000) { // Reasonable price range
+            prices.push(price);
           }
-        });
-      }
+        }
+      });
+      
+      console.log(`Extracted ${prices.length} valid prices from text`);
     }
 
     console.log(`Found ${prices.length} prices from ${marketplace} using ZenRows`);
@@ -326,6 +364,11 @@ async function fetchCompetitorPrices(
   merchant_id: string
 ) {
   console.log('Fetching real competitor prices...');
+  
+  // Simplify product name for better search results
+  // Extract core product name (remove specs, colors, etc)
+  const simplifiedName = simplifyProductName(product_name);
+  console.log(`Original: "${product_name}" -> Simplified: "${simplifiedName}"`);
   
   // Delete ALL old competitor data for this baseline first to prevent duplicates
   await supabase
@@ -351,7 +394,7 @@ async function fetchCompetitorPrices(
     try {
       console.log(`Scraping ${marketplace.name}...`);
       
-      const searchUrl = `${marketplace.search}${encodeURIComponent(product_name)}`;
+      const searchUrl = `${marketplace.search}${encodeURIComponent(simplifiedName)}`;
       const prices = await scrapeMarketplacePrices(searchUrl, marketplace.name);
 
       if (prices.length > 0) {
