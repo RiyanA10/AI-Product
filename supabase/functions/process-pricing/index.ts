@@ -193,17 +193,27 @@ async function fetchInflationRate(currency: string): Promise<{ rate: number; sou
 }
 
 async function scrapeMarketplacePrices(url: string, marketplace: string): Promise<number[]> {
+  const zenrowsApiKey = Deno.env.get('ZENROWS_API_KEY');
+  
+  if (!zenrowsApiKey) {
+    console.error('ZENROWS_API_KEY not configured');
+    return [];
+  }
+  
   try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-      },
-    });
+    console.log(`Scraping ${marketplace} with ZenRows API, URL:`, url);
+    
+    // Build ZenRows API URL with parameters
+    const zenrowsUrl = new URL('https://api.zenrows.com/v1/');
+    zenrowsUrl.searchParams.set('url', url);
+    zenrowsUrl.searchParams.set('apikey', zenrowsApiKey);
+    zenrowsUrl.searchParams.set('js_render', 'true');
+    zenrowsUrl.searchParams.set('premium_proxy', 'true');
+    
+    const response = await fetch(zenrowsUrl.toString());
 
     if (!response.ok) {
-      console.error(`HTTP error! status: ${response.status}`);
+      console.error(`ZenRows API returned HTTP ${response.status} for ${marketplace}`);
       return [];
     }
 
@@ -274,11 +284,11 @@ async function scrapeMarketplacePrices(url: string, marketplace: string): Promis
       if (prices.length > 0) break;
     }
 
-    console.log(`Found ${prices.length} prices from ${marketplace}`);
+    console.log(`Found ${prices.length} prices from ${marketplace} using ZenRows`);
     return prices.slice(0, 10);
     
   } catch (error) {
-    console.error(`Error scraping ${marketplace}:`, error);
+    console.error(`Error scraping ${marketplace} with ZenRows:`, error);
     return [];
   }
 }
