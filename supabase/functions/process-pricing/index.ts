@@ -9,7 +9,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// Input validation schema
 const RequestSchema = z.object({
   baseline_id: z.string().uuid('Invalid baseline ID format')
 });
@@ -20,7 +19,6 @@ serve(async (req) => {
   }
 
   try {
-    // Verify authentication
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -32,12 +30,9 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: {
-        headers: { Authorization: authHeader }
-      }
+      global: { headers: { Authorization: authHeader } }
     });
 
-    // Get authenticated user
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -46,20 +41,13 @@ serve(async (req) => {
       });
     }
 
-    // Validate input
     const body = await req.json();
     const validation = RequestSchema.safeParse(body);
     
     if (!validation.success) {
       return new Response(
-        JSON.stringify({ 
-          error: 'Invalid input', 
-          details: validation.error.issues 
-        }), 
-        { 
-          status: 400, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        }
+        JSON.stringify({ error: 'Invalid input', details: validation.error.issues }), 
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
@@ -67,7 +55,6 @@ serve(async (req) => {
 
     console.log('Starting pricing processing for baseline:', baseline_id);
 
-    // Get baseline data first to verify ownership and get currency
     const { data: baseline, error: baselineError } = await supabase
       .from('product_baselines')
       .select('*')
@@ -81,7 +68,6 @@ serve(async (req) => {
       });
     }
 
-    // Verify ownership
     if (baseline.merchant_id !== user.id) {
       return new Response(JSON.stringify({ error: 'Forbidden: Not your baseline' }), {
         status: 403,
@@ -89,17 +75,14 @@ serve(async (req) => {
       });
     }
 
-    // Create processing status
     await supabase.from('processing_status').insert({
       baseline_id,
       status: 'processing',
       current_step: 'fetching_inflation'
     });
 
-    // Process in background using EdgeRuntime.waitUntil
     const backgroundTask = (async () => {
       try {
-        // Step 1: Fetch inflation rate (instant)
         const { rate: inflationRate, source: inflationSource } = await fetchInflationRate(baseline.currency);
         console.log(`Fetched inflation rate for ${baseline.currency}:`, inflationRate, 'from', inflationSource);
         
@@ -112,110 +95,88 @@ serve(async (req) => {
           .update({ current_step: 'fetching_competitors' })
           .eq('baseline_id', baseline_id);
 
-        // Step 2: Fetch competitor prices (fast)
-        await fetchCompetitorPrices(supabase, baseline_id, baseline.product_name, baseline.currency, baseline.merchant_id);
+        await fetchCompetitorPrices(
+          supabase, 
+          baseline_id, 
+          baseline.product_name,
+          baseline.currency,
+          baseline.merchant_id,
+          baseline.current_price
+        );
 
         await supabase.from('processing_status')
           .update({ current_step: 'calculating_price' })
           .eq('baseline_id', baseline_id);
 
-        // Step 3: Calculate optimal price (fast)
-        await calculateOptimalPrice(supabase, baseline_id, baseline, inflationRate);
+        await calculateOptimalPrice(supabase, baseline, inflationRate);
 
-        // Mark as completed
         await supabase.from('processing_status')
-          .update({ 
-            status: 'completed',
-            current_step: 'completed'
-          })
+          .update({ status: 'completed', current_step: 'complete' })
           .eq('baseline_id', baseline_id);
 
         console.log('Processing completed successfully');
-      } catch (error) {
-        console.error('Processing error:', error);
-        const errorMessage = error instanceof Error ? error.message : 'Processing failed';
+      } catch (error: any) {
+        console.error('Background processing error:', error);
         await supabase.from('processing_status')
-          .update({ 
-            status: 'failed',
-            error_message: errorMessage
-          })
+          .update({ status: 'failed', error_message: error?.message || 'Unknown error' })
           .eq('baseline_id', baseline_id);
       }
     })();
 
-    // Use EdgeRuntime.waitUntil to keep function alive for background task
-    // @ts-ignore - EdgeRuntime is available in Deno Deploy
-    if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
-      // @ts-ignore
-      EdgeRuntime.waitUntil(backgroundTask);
-    } else {
-      // Fallback for local development
-      backgroundTask.catch(console.error);
+    // Use Deno EdgeRuntime for background tasks
+    const edgeRuntime = (globalThis as any).EdgeRuntime;
+    if (edgeRuntime?.waitUntil) {
+      edgeRuntime.waitUntil(backgroundTask);
     }
 
-    // Return immediately
-    return new Response(JSON.stringify({ 
-      success: true, 
-      baseline_id,
-      message: 'Processing started'
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ success: true, message: 'Processing started', baseline_id }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
 
-  } catch (error) {
-    console.error('Error in process-pricing:', error);
-    return new Response(JSON.stringify({ 
-      error: 'Internal server error'
-    }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-    });
+  } catch (error: any) {
+    console.error('Error in process-pricing function:', error);
+    return new Response(
+      JSON.stringify({ error: error?.message || 'Unknown error' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 });
 
 async function fetchInflationRate(currency: string): Promise<{ rate: number; source: string }> {
   if (currency === 'SAR') {
-    return { 
-      rate: 0.023, 
-      source: 'SAMA (Saudi Central Bank) - Latest CPI Data' 
-    };
+    return { rate: 0.023, source: 'SAMA (Saudi Central Bank) - Latest CPI Data' };
   } else if (currency === 'USD') {
-    return { 
-      rate: 0.031, 
-      source: 'US Bureau of Labor Statistics - Latest CPI' 
-    };
+    return { rate: 0.031, source: 'US Bureau of Labor Statistics - Latest CPI' };
   }
-  
-  return { 
-    rate: 0.025, 
-    source: 'IMF Global Estimate' 
-  };
+  return { rate: 0.025, source: 'IMF Global Estimate' };
 }
 
 function simplifyProductName(productName: string): string {
-  // Remove common specifications and details that might not match across marketplaces
-  let simplified = productName;
-  
-  // Remove detailed specs (anything after commas)
-  simplified = simplified.split(',')[0].trim();
-  
-  // Remove size/storage/color info in parentheses or after dashes
+  let simplified = productName.split(',')[0].trim();
   simplified = simplified.replace(/\([^)]*\)/g, '').trim();
   simplified = simplified.replace(/\s*-\s*.*/g, '').trim();
   
-  // Remove common spec keywords  
   const removePatterns = [/5G/gi, /4G/gi, /LTE/gi, /WiFi/gi, /Bluetooth/gi, /\d+GB/gi, /\d+\.\d+\s*inch/gi];
   removePatterns.forEach(pattern => {
     simplified = simplified.replace(pattern, '').trim();
   });
   
-  // Clean up extra spaces
   simplified = simplified.replace(/\s+/g, ' ').trim();
-  
   return simplified;
 }
 
-async function scrapeMarketplacePrices(url: string, marketplace: string): Promise<number[]> {
+function extractProductKeywords(productName: string): string[] {
+  const simplified = simplifyProductName(productName);
+  return simplified.split(' ').filter(word => word.length > 2);
+}
+
+async function scrapeMarketplacePrices(
+  url: string, 
+  marketplace: string, 
+  productKeywords: string[], 
+  baselinePrice: number
+): Promise<number[]> {
   const zenrowsApiKey = Deno.env.get('ZENROWS_API_KEY');
   
   if (!zenrowsApiKey) {
@@ -224,9 +185,8 @@ async function scrapeMarketplacePrices(url: string, marketplace: string): Promis
   }
   
   try {
-    console.log(`Scraping ${marketplace} with ZenRows API, URL:`, url);
+    console.log(`Scraping ${marketplace} for: [${productKeywords.join(', ')}]`);
     
-    // Build ZenRows API URL with parameters
     const zenrowsUrl = new URL('https://api.zenrows.com/v1/');
     zenrowsUrl.searchParams.set('url', url);
     zenrowsUrl.searchParams.set('apikey', zenrowsApiKey);
@@ -236,12 +196,12 @@ async function scrapeMarketplacePrices(url: string, marketplace: string): Promis
     const response = await fetch(zenrowsUrl.toString());
 
     if (!response.ok) {
-      console.error(`ZenRows API returned HTTP ${response.status} for ${marketplace}`);
+      console.error(`ZenRows returned HTTP ${response.status}`);
       return [];
     }
 
     const html = await response.text();
-    console.log(`Received HTML length: ${html.length} characters from ${marketplace}`);
+    console.log(`Received ${html.length} chars from ${marketplace}`);
     
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
@@ -251,114 +211,102 @@ async function scrapeMarketplacePrices(url: string, marketplace: string): Promis
       return [];
     }
 
-    const prices: number[] = [];
-    
-    const selectors = {
-      amazon: [
-        'span.a-price > span.a-offscreen',
-        '.a-price-whole',
-        'span[data-a-size="xl"] > span.a-offscreen'
-      ],
-      noon: [
-        '[data-qa="product-price"]',
-        '.priceNow',
-        'strong[class*="price"]'
-      ],
-      extra: [
-        '.price',
-        '[data-price]',
-        'span[class*="price"]'
-      ],
-      jarir: [
-        '.price',
-        'span[class*="price"]',
-        '[data-price]'
-      ],
-      walmart: [
-        'span[itemprop="price"]',
-        '[data-automation-id="product-price"]',
-        'div[data-testid="list-view"] span[class*="price"]'
-      ],
-      ebay: [
-        'span.s-item__price',
-        'span.textSpan',
-        'div.x-price-primary > span'
-      ],
-      target: [
-        'span[data-test="product-price"]',
-        'span[data-test="current-price"]',
-        'div[data-test="product-price"] span'
-      ]
+    // Container-based extraction with title+price validation
+    const marketplaceConfig: Record<string, { container: string; title: string; price: string }> = {
+      amazon: {
+        container: 'div[data-component-type="s-search-result"]',
+        title: 'h2 span',
+        price: 'span.a-price > span.a-offscreen'
+      },
+      walmart: {
+        container: 'div[data-item-id]',
+        title: 'span[data-automation-id="product-title"]',
+        price: 'div[data-automation-id="product-price"] span'
+      },
+      ebay: {
+        container: 'li.s-item',
+        title: 'div.s-item__title',
+        price: 'span.s-item__price'
+      },
+      target: {
+        container: 'div[data-test="@web/site-top-of-funnel/ProductCardWrapper"]',
+        title: 'a[data-test="product-title"]',
+        price: 'span[data-test="current-price"]'
+      },
+      noon: {
+        container: 'div[data-qa="product-item"]',
+        title: '[data-qa="product-name"]',
+        price: '[data-qa="product-price"]'
+      },
+      extra: {
+        container: 'div.product-item',
+        title: '.product-title',
+        price: '.price'
+      },
+      jarir: {
+        container: 'div.product-card',
+        title: '.product-name',
+        price: '.price'
+      }
     };
 
-    const marketplaceSelectors = selectors[marketplace as keyof typeof selectors] || [];
-    console.log(`Trying ${marketplaceSelectors.length} selectors for ${marketplace}`);
+    const config = marketplaceConfig[marketplace];
     
-    for (const selector of marketplaceSelectors) {
-      const elements = doc.querySelectorAll(selector);
-      console.log(`Selector "${selector}" found ${elements.length} elements`);
-      
-      elements.forEach((el: any) => {
-        const text = el.textContent || el.getAttribute('content') || '';
-        const priceMatch = text.match(/[\d,]+\.?\d*/);
+    if (!config) {
+      console.log(`No container config for ${marketplace}`);
+      return [];
+    }
+
+    const validPrices: number[] = [];
+    const containers = doc.querySelectorAll(config.container);
+    
+    console.log(`Found ${containers.length} product containers`);
+
+    const minPrice = baselinePrice * 0.3;
+    const maxPrice = baselinePrice * 3;
+
+    containers.forEach((container: any, index: number) => {
+      try {
+        const titleEl = container.querySelector(config.title);
+        const priceEl = container.querySelector(config.price);
         
-        if (priceMatch) {
-          const price = parseFloat(priceMatch[0].replace(/,/g, ''));
-          if (price > 0 && price < 100000) {
-            prices.push(price);
+        if (!titleEl || !priceEl) return;
+        
+        const title = titleEl.textContent?.trim().toLowerCase() || '';
+        const priceText = priceEl.textContent?.trim() || '';
+        
+        // Validate: Title must contain at least 2 product keywords
+        const matchCount = productKeywords.filter(keyword => 
+          title.includes(keyword.toLowerCase())
+        ).length;
+        
+        if (matchCount < 2) return;
+        
+        // Extract price
+        const priceMatch = priceText.match(/[\d,]+\.?\d*/);
+        if (!priceMatch) return;
+        
+        const price = parseFloat(priceMatch[0].replace(/,/g, ''));
+        
+        // Validate: Price must be within reasonable range (30%-300% of baseline)
+        if (price >= minPrice && price <= maxPrice) {
+          validPrices.push(price);
+          if (index < 3) {
+            console.log(`✓ Match: "${title.substring(0, 60)}..." = $${price}`);
           }
+        } else if (index < 3) {
+          console.log(`✗ Out of range: $${price} (expected: $${minPrice.toFixed(2)}-$${maxPrice.toFixed(2)})`);
         }
-      });
-      
-      if (prices.length > 0) break;
-    }
-
-    // Fallback: Search entire body text for price patterns if selectors failed
-    if (prices.length === 0) {
-      console.log(`Selector-based extraction failed, trying text-based extraction for ${marketplace}`);
-      const bodyText = doc.body?.textContent || '';
-      
-      // ONLY extract prices with clear currency indicators to avoid false positives
-      const pricePatterns = [
-        /(?:SAR|SR|ر\.س\.?)\s*[\d,]+\.?\d{0,2}/gi,  // SAR with prefix
-        /[\d,]+\.?\d{0,2}\s*(?:SAR|SR|ر\.س\.?)/gi,  // SAR with suffix
-        /\$[\d,]+\.?\d{0,2}/gi,                      // USD with $ prefix (no space)
-        /USD\s*[\d,]+\.?\d{0,2}/gi                   // USD with text prefix
-      ];
-      
-      const seenPrices = new Set<number>();
-      
-      pricePatterns.forEach(pattern => {
-        const matches = bodyText.match(pattern);
-        if (matches) {
-          matches.forEach((match) => {
-            const numMatch = match.match(/[\d,]+\.?\d*/);
-            if (numMatch) {
-              const price = parseFloat(numMatch[0].replace(/,/g, ''));
-              // Stricter price range and deduplicate
-              if (price > 50 && price < 50000 && !seenPrices.has(price)) {
-                prices.push(price);
-                seenPrices.add(price);
-              }
-            }
-          });
-        }
-      });
-      
-      // Limit to reasonable number of prices
-      if (prices.length > 50) {
-        prices.sort((a, b) => a - b);
-        prices.splice(50);
+      } catch (err) {
+        // Skip invalid containers
       }
-      
-      console.log(`Extracted ${prices.length} unique prices from text with currency indicators`);
-    }
+    });
 
-    console.log(`Found ${prices.length} prices from ${marketplace} using ZenRows`);
-    return prices.slice(0, 10);
+    console.log(`Extracted ${validPrices.length} validated prices (range: $${minPrice.toFixed(2)}-$${maxPrice.toFixed(2)})`);
+    return validPrices.slice(0, 20);
     
   } catch (error) {
-    console.error(`Error scraping ${marketplace} with ZenRows:`, error);
+    console.error(`Error scraping ${marketplace}:`, error);
     return [];
   }
 }
@@ -368,16 +316,18 @@ async function fetchCompetitorPrices(
   baseline_id: string,
   product_name: string,
   currency: string,
-  merchant_id: string
+  merchant_id: string,
+  baseline_price: number
 ) {
-  console.log('Fetching real competitor prices...');
+  console.log('Fetching competitor prices...');
   
-  // Simplify product name for better search results
-  // Extract core product name (remove specs, colors, etc)
   const simplifiedName = simplifyProductName(product_name);
-  console.log(`Original: "${product_name}" -> Simplified: "${simplifiedName}"`);
+  const keywords = extractProductKeywords(product_name);
+  console.log(`Product: "${product_name}"`);
+  console.log(`Simplified: "${simplifiedName}"`);
+  console.log(`Keywords: [${keywords.join(', ')}]`);
+  console.log(`Price range: $${(baseline_price * 0.3).toFixed(2)} - $${(baseline_price * 3).toFixed(2)}`);
   
-  // Delete ALL old competitor data for this baseline first to prevent duplicates
   await supabase
     .from('competitor_prices')
     .delete()
@@ -399,10 +349,10 @@ async function fetchCompetitorPrices(
 
   for (const marketplace of marketplaces) {
     try {
-      console.log(`Scraping ${marketplace.name}...`);
+      console.log(`\n=== Scraping ${marketplace.name} ===`);
       
       const searchUrl = `${marketplace.search}${encodeURIComponent(simplifiedName)}`;
-      const prices = await scrapeMarketplacePrices(searchUrl, marketplace.name);
+      const prices = await scrapeMarketplacePrices(searchUrl, marketplace.name, keywords, baseline_price);
 
       if (prices.length > 0) {
         const lowest = Math.min(...prices);
@@ -421,7 +371,7 @@ async function fetchCompetitorPrices(
           fetch_status: 'success'
         });
 
-        console.log(`Saved ${prices.length} real prices from ${marketplace.name}`);
+        console.log(`✓ Saved ${prices.length} prices: $${lowest.toFixed(2)} - $${highest.toFixed(2)} (avg: $${average.toFixed(2)})`);
       } else {
         await supabase.from('competitor_prices').insert({
           baseline_id,
@@ -431,7 +381,7 @@ async function fetchCompetitorPrices(
           fetch_status: 'no_data'
         });
         
-        console.log(`No prices found from ${marketplace.name}`);
+        console.log(`✗ No matching products found`);
       }
     } catch (error) {
       console.error(`Error fetching from ${marketplace.name}:`, error);
@@ -449,128 +399,97 @@ async function fetchCompetitorPrices(
 
 async function calculateOptimalPrice(
   supabase: any,
-  baseline_id: string,
   baseline: any,
   inflationRate: number
 ) {
-  const {
-    current_price,
-    current_quantity,
-    cost_per_unit,
-    base_elasticity,
-    merchant_id
-  } = baseline;
-
   const { data: competitorData } = await supabase
     .from('competitor_prices')
     .select('*')
-    .eq('baseline_id', baseline_id)
+    .eq('baseline_id', baseline.id)
     .eq('fetch_status', 'success');
 
-  const marketStats = calculateMarketStats(competitorData || []);
-  
+  if (!competitorData || competitorData.length === 0) {
+    console.log('No competitor data available, using baseline price');
+    
+    await supabase.from('pricing_results').insert({
+      baseline_id: baseline.id,
+      merchant_id: baseline.merchant_id,
+      currency: baseline.currency,
+      optimal_price: baseline.current_price,
+      suggested_price: baseline.current_price,
+      inflation_rate: inflationRate,
+      inflation_adjustment: 1 + inflationRate,
+      base_elasticity: baseline.base_elasticity,
+      calibrated_elasticity: baseline.base_elasticity,
+      competitor_factor: 1,
+      has_warning: true,
+      warning_message: 'No competitor data available. Using baseline price.'
+    });
+    
+    return;
+  }
+
+  const marketStats = calculateMarketStats(competitorData);
   const inflationAdjustment = 1 + inflationRate;
-  
-  let competitorFactor = 1.0;
-  if (marketStats.average) {
-    if (current_price < marketStats.average * 0.95) {
-      competitorFactor = 1.1;
-    } else if (current_price > marketStats.average * 1.05) {
-      competitorFactor = 0.9;
-    }
-  }
-  
-  let adjustedElasticity = base_elasticity * inflationAdjustment * competitorFactor;
-  let optimalPrice = 0;
-  let iterations = 0;
-  const maxIterations = 10;
-  
-  while (iterations < maxIterations) {
-    const b = Math.abs(adjustedElasticity) * (current_quantity / current_price);
-    const a = current_quantity + (b * current_price);
-    
-    optimalPrice = (a + (b * cost_per_unit)) / (2 * b);
-    
-    if (!marketStats.lowest || !marketStats.highest) break;
-    
-    const competitorMin = marketStats.lowest * 0.95;
-    const competitorMax = marketStats.highest * 1.10;
-    
-    if (optimalPrice >= competitorMin && optimalPrice <= competitorMax) {
-      break;
-    }
-    
-    if (optimalPrice < competitorMin) {
-      adjustedElasticity *= 0.95;
-    } else if (optimalPrice > competitorMax) {
-      adjustedElasticity *= 1.05;
-    }
-    
-    iterations++;
-  }
-  
-  let suggestedPrice = optimalPrice;
-  let warning = null;
-  
-  if (marketStats.lowest && marketStats.highest) {
-    if (optimalPrice < marketStats.lowest * 0.95) {
-      suggestedPrice = marketStats.lowest;
-      warning = "⚠️ Optimal price is below market range. Using lowest competitor price to maintain brand perception.";
-    } else if (optimalPrice > marketStats.highest * 1.10) {
-      suggestedPrice = marketStats.highest * 1.05;
-      warning = "⚠️ Optimal price is above market range. Using competitive ceiling to avoid losing customers.";
-    }
-  }
-  
-  const currentProfit = (current_price - cost_per_unit) * current_quantity;
-  const b = Math.abs(adjustedElasticity) * (current_quantity / current_price);
-  const a = current_quantity + (b * current_price);
-  const newQuantity = Math.max(0, a - (b * suggestedPrice));
-  
-  const expectedProfit = (suggestedPrice - cost_per_unit) * newQuantity;
-  const profitIncrease = expectedProfit - currentProfit;
+  const inflationAdjustedPrice = baseline.current_price * inflationAdjustment;
+
+  const avgCompetitorPrice = marketStats.average;
+  const competitorFactor = avgCompetitorPrice / baseline.current_price;
+
+  const calibratedElasticity = baseline.base_elasticity * (1 + (competitorFactor - 1) * 0.3);
+
+  const optimalPrice = inflationAdjustedPrice * Math.pow(
+    (1 + competitorFactor) / 2,
+    1 / (1 + Math.abs(calibratedElasticity))
+  );
+
+  const suggestedPrice = Math.round(optimalPrice * 100) / 100;
+
+  const currentProfit = (baseline.current_price - baseline.cost_per_unit) * baseline.current_quantity;
+  const newQuantity = baseline.current_quantity * Math.pow(
+    baseline.current_price / suggestedPrice,
+    calibratedElasticity
+  );
+  const newProfit = (suggestedPrice - baseline.cost_per_unit) * newQuantity;
+  const profitIncrease = newProfit - currentProfit;
   const profitIncreasePercent = (profitIncrease / currentProfit) * 100;
-  
-  const positionVsMarket = marketStats.average 
-    ? ((suggestedPrice - marketStats.average) / marketStats.average) * 100
-    : null;
-  
+
+  const positionVsMarket = ((suggestedPrice - marketStats.average) / marketStats.average) * 100;
+
+  console.log(`Calculated optimal price: ${optimalPrice} Suggested: ${suggestedPrice}`);
+
   await supabase.from('pricing_results').insert({
-    baseline_id,
-    merchant_id,
-    base_elasticity,
-    inflation_rate: inflationRate,
-    inflation_adjustment: inflationAdjustment,
-    competitor_factor: competitorFactor,
-    calibrated_elasticity: adjustedElasticity,
+    baseline_id: baseline.id,
+    merchant_id: baseline.merchant_id,
+    currency: baseline.currency,
     optimal_price: optimalPrice,
     suggested_price: suggestedPrice,
-    expected_monthly_profit: expectedProfit,
-    profit_increase_amount: profitIncrease,
-    profit_increase_percent: profitIncreasePercent,
-    market_average: marketStats.average,
+    inflation_rate: inflationRate,
+    inflation_adjustment: inflationAdjustment,
+    base_elasticity: baseline.base_elasticity,
+    calibrated_elasticity: calibratedElasticity,
+    competitor_factor: competitorFactor,
     market_lowest: marketStats.lowest,
+    market_average: marketStats.average,
     market_highest: marketStats.highest,
     position_vs_market: positionVsMarket,
-    has_warning: warning !== null,
-    warning_message: warning,
-    currency: baseline.currency
+    expected_monthly_profit: newProfit,
+    profit_increase_amount: profitIncrease,
+    profit_increase_percent: profitIncreasePercent
   });
-
-  console.log('Calculated optimal price:', optimalPrice, 'Suggested:', suggestedPrice);
 }
 
-function calculateMarketStats(competitorData: any[]) {
+function calculateMarketStats(competitorData: any[]): { lowest: number; average: number; highest: number } {
   const allPrices: number[] = [];
   
-  for (const comp of competitorData) {
+  competitorData.forEach(comp => {
     if (comp.lowest_price) allPrices.push(comp.lowest_price);
     if (comp.average_price) allPrices.push(comp.average_price);
     if (comp.highest_price) allPrices.push(comp.highest_price);
-  }
+  });
   
   if (allPrices.length === 0) {
-    return { lowest: null, average: null, highest: null };
+    return { lowest: 0, average: 0, highest: 0 };
   }
   
   return {
