@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
+import { DOMParser } from 'https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -104,13 +105,11 @@ serve(async (req) => {
       try {
         console.log(`Fetching data from ${marketplace.name}...`);
         
-        // Simulate realistic competitor prices based on marketplace and product
-        const basePrice = 45 + Math.random() * 20;
-        const variance = basePrice * 0.15;
+        // Scrape real prices from marketplace
+        const searchUrl = `${marketplace.search}${encodeURIComponent(product_name)}`;
+        console.log(`Scraping URL: ${searchUrl}`);
         
-        const prices = Array.from({ length: 3 + Math.floor(Math.random() * 3) }, () => 
-          basePrice + (Math.random() - 0.5) * variance
-        );
+        const prices = await scrapeMarketplacePrices(searchUrl, marketplace.name);
 
         if (prices.length > 0) {
           const stats = {
@@ -166,7 +165,7 @@ serve(async (req) => {
         results.push({
           marketplace: marketplace.name,
           status: 'failed',
-          error: 'Failed to fetch data'
+          error: error instanceof Error ? error.message : 'Failed to fetch data'
         });
       }
     }
@@ -190,20 +189,112 @@ serve(async (req) => {
   }
 });
 
+async function scrapeMarketplacePrices(url: string, marketplace: string): Promise<number[]> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+      },
+    });
+
+    if (!response.ok) {
+      console.error(`HTTP error! status: ${response.status}`);
+      return [];
+    }
+
+    const html = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    
+    if (!doc) {
+      console.error('Failed to parse HTML');
+      return [];
+    }
+
+    const prices: number[] = [];
+    
+    // Define selectors for each marketplace
+    const selectors = {
+      amazon: [
+        '.a-price-whole',
+        'span.a-price > span.a-offscreen',
+        '.a-price .a-price-whole'
+      ],
+      noon: [
+        '[data-qa="product-price"]',
+        '.priceNow',
+        'strong[class*="price"]'
+      ],
+      extra: [
+        '.price',
+        '[data-price]',
+        'span[class*="price"]'
+      ],
+      jarir: [
+        '.price',
+        'span[class*="price"]',
+        '[data-price]'
+      ],
+      walmart: [
+        '[itemprop="price"]',
+        'span[class*="price"]',
+        '.price-main'
+      ],
+      ebay: [
+        '.s-item__price',
+        'span[class*="POSITIVE"]'
+      ],
+      target: [
+        '[data-test="product-price"]',
+        'span[class*="price"]'
+      ]
+    };
+
+    const marketplaceSelectors = selectors[marketplace as keyof typeof selectors] || [];
+    
+    for (const selector of marketplaceSelectors) {
+      const elements = doc.querySelectorAll(selector);
+      
+      elements.forEach((el: any) => {
+        const text = el.textContent || el.getAttribute('content') || '';
+        const priceMatch = text.match(/[\d,]+\.?\d*/);
+        
+        if (priceMatch) {
+          const price = parseFloat(priceMatch[0].replace(/,/g, ''));
+          if (price > 0 && price < 100000) {
+            prices.push(price);
+          }
+        }
+      });
+      
+      if (prices.length > 0) break;
+    }
+
+    console.log(`Found ${prices.length} prices from ${marketplace}`);
+    return prices.slice(0, 10);
+    
+  } catch (error) {
+    console.error(`Error scraping ${marketplace}:`, error);
+    return [];
+  }
+}
+
 function getMarketplacesByCurrency(currency: string) {
   if (currency === 'SAR') {
     return [
-      { name: 'amazon', domain: 'amazon.sa' },
-      { name: 'noon', domain: 'noon.com/saudi-en' },
-      { name: 'extra', domain: 'extra.com/en-sa' },
-      { name: 'jarir', domain: 'jarir.com' }
+      { name: 'amazon', domain: 'amazon.sa', search: 'https://www.amazon.sa/s?k=' },
+      { name: 'noon', domain: 'noon.com/saudi-en', search: 'https://www.noon.com/saudi-en/search?q=' },
+      { name: 'extra', domain: 'extra.com/en-sa', search: 'https://www.extra.com/en-sa/search?q=' },
+      { name: 'jarir', domain: 'jarir.com', search: 'https://www.jarir.com/search/?q=' }
     ];
   } else if (currency === 'USD') {
     return [
-      { name: 'amazon', domain: 'amazon.com' },
-      { name: 'walmart', domain: 'walmart.com' },
-      { name: 'ebay', domain: 'ebay.com' },
-      { name: 'target', domain: 'target.com' }
+      { name: 'amazon', domain: 'amazon.com', search: 'https://www.amazon.com/s?k=' },
+      { name: 'walmart', domain: 'walmart.com', search: 'https://www.walmart.com/search?q=' },
+      { name: 'ebay', domain: 'ebay.com', search: 'https://www.ebay.com/sch/i.html?_nkw=' },
+      { name: 'target', domain: 'target.com', search: 'https://www.target.com/s?searchTerm=' }
     ];
   }
   
