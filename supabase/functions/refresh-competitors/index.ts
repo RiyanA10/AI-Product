@@ -361,28 +361,38 @@ function extractKeyTerms(name: string): string[] {
   return terms;
 }
 
-function calculateSimilarity(product1: string, product2: string): number {
-  const terms1 = extractKeyTerms(product1);
-  const terms2 = extractKeyTerms(product2);
+function calculateSimilarity(baselineProduct: string, competitorProduct: string): number {
+  const baselineTerms = extractKeyTerms(baselineProduct);
+  const competitorTerms = extractKeyTerms(competitorProduct);
   
-  if (terms1.length === 0 || terms2.length === 0) return 0;
+  if (baselineTerms.length === 0 || competitorTerms.length === 0) return 0;
   
-  let matchCount = 0;
-  let exactModelMatch = false;
+  const matches = new Set<string>();
+  let hasModelMatch = false;
   
-  for (const term1 of terms1) {
-    for (const term2 of terms2) {
-      if (term1 === term2) {
-        matchCount++;
-        if (/\d/.test(term1) && /[a-z]/i.test(term1)) {
-          exactModelMatch = true;
+  for (const baselineTerm of baselineTerms) {
+    for (const competitorTerm of competitorTerms) {
+      if (baselineTerm === competitorTerm) {
+        matches.add(baselineTerm);
+        if (/\d/.test(baselineTerm) && /[a-z]/i.test(baselineTerm)) {
+          hasModelMatch = true;
         }
       }
     }
   }
   
-  const similarity = matchCount / Math.max(terms1.length, terms2.length);
-  return exactModelMatch ? Math.min(similarity * 1.5, 1.0) : similarity;
+  const matchCount = matches.size;
+  let similarity = matchCount / baselineTerms.length;
+  
+  if (matchCount === baselineTerms.length) {
+    similarity = 0.95;
+  }
+  
+  if (hasModelMatch) {
+    similarity = Math.min(similarity * 1.05, 1.0);
+  }
+  
+  return similarity;
 }
 
 function extractPrice(text: string, expectedCurrency: string): { price: number; confidence: number } | null {
@@ -512,6 +522,7 @@ interface ScrapedProduct {
 async function scrapeMarketplacePrices(
   config: MarketplaceConfig,
   productName: string,
+  fullProductName: string,
   baselinePrice: number,
   currency: string
 ): Promise<ScrapedProduct[]> {
@@ -577,7 +588,7 @@ async function scrapeMarketplacePrices(
     }
     
     const products: ScrapedProduct[] = [];
-    const normalizedSearch = normalizeProductName(productName);
+    const normalizedBaseline = normalizeProductName(fullProductName);
     
     for (let i = 0; i < Math.min(containers.length, 50); i++) {
       const container = containers[i];
@@ -597,8 +608,16 @@ async function scrapeMarketplacePrices(
       const extracted = extractPrice(priceText, currency);
       if (!extracted || extracted.price <= 0) continue;
       
-      const similarity = calculateSimilarity(normalizedSearch, normalizeProductName(name));
+      const normalizedCompetitor = normalizeProductName(name);
+      const similarity = calculateSimilarity(normalizedBaseline, normalizedCompetitor);
       const priceRatio = extracted.price / baselinePrice;
+      
+      let adjustedSimilarity = similarity;
+      if (priceRatio < 0.2 || priceRatio > 5.0) {
+        adjustedSimilarity = similarity * 0.5;
+      } else if (priceRatio < 0.4 || priceRatio > 2.5) {
+        adjustedSimilarity = similarity * 0.8;
+      }
       
       // Try to extract product URL
       let productUrl: string | undefined;
@@ -618,13 +637,15 @@ async function scrapeMarketplacePrices(
       products.push({
         name,
         price: extracted.price,
-        similarity,
+        similarity: adjustedSimilarity,
         priceRatio,
         url: productUrl
       });
       
       if (i < 5) {
-        console.log(`   [${i}] "${name.slice(0, 40)}..." - ${extracted.price} ${currency} (${(similarity * 100).toFixed(0)}% match, ratio: ${priceRatio.toFixed(2)})`);
+        console.log(`   [${i}] "${name.slice(0, 50)}..."`);
+        console.log(`       Raw: ${(similarity * 100).toFixed(0)}% → Adjusted: ${(adjustedSimilarity * 100).toFixed(0)}%`);
+        console.log(`       Price: ${extracted.price} ${currency} (${priceRatio.toFixed(2)}x baseline)`);
       }
     }
     
@@ -759,6 +780,7 @@ serve(async (req) => {
         let products = await scrapeMarketplacePrices(
           config,
           coreProductName,
+          baseline.product_name,
           baseline.current_price,
           baseline.currency
         );
