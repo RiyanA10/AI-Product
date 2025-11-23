@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/integrations/supabase/client';
 import { Users, Package, TrendingUp, Activity } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatNumber } from '@/lib/utils';
 
 interface Stats {
   totalUsers: number;
@@ -67,7 +68,7 @@ const AdminOverview = () => {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.totalUsers || 0}</div>
+            <div className="text-2xl font-bold">{formatNumber(stats?.totalUsers || 0, 0)}</div>
           </CardContent>
         </Card>
 
@@ -77,7 +78,7 @@ const AdminOverview = () => {
             <Package className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.totalProducts || 0}</div>
+            <div className="text-2xl font-bold">{formatNumber(stats?.totalProducts || 0, 0)}</div>
           </CardContent>
         </Card>
 
@@ -87,7 +88,7 @@ const AdminOverview = () => {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.totalCompetitorProducts || 0}</div>
+            <div className="text-2xl font-bold">{formatNumber(stats?.totalCompetitorProducts || 0, 0)}</div>
           </CardContent>
         </Card>
 

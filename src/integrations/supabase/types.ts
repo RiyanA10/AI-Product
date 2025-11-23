@@ -201,6 +201,71 @@ export type Database = {
         }
         Relationships: []
       }
+      pricing_performance: {
+        Row: {
+          actual_profit: number | null
+          actual_sales: number | null
+          applied_at: string | null
+          applied_price: number | null
+          baseline_id: string | null
+          created_at: string | null
+          id: string
+          market_average: number | null
+          market_highest: number | null
+          market_lowest: number | null
+          merchant_id: string
+          predicted_sales: number
+          profit_accuracy_score: number | null
+          sales_accuracy_score: number | null
+          suggested_price: number
+          updated_at: string | null
+        }
+        Insert: {
+          actual_profit?: number | null
+          actual_sales?: number | null
+          applied_at?: string | null
+          applied_price?: number | null
+          baseline_id?: string | null
+          created_at?: string | null
+          id?: string
+          market_average?: number | null
+          market_highest?: number | null
+          market_lowest?: number | null
+          merchant_id: string
+          predicted_sales: number
+          profit_accuracy_score?: number | null
+          sales_accuracy_score?: number | null
+          suggested_price: number
+          updated_at?: string | null
+        }
+        Update: {
+          actual_profit?: number | null
+          actual_sales?: number | null
+          applied_at?: string | null
+          applied_price?: number | null
+          baseline_id?: string | null
+          created_at?: string | null
+          id?: string
+          market_average?: number | null
+          market_highest?: number | null
+          market_lowest?: number | null
+          merchant_id?: string
+          predicted_sales?: number
+          profit_accuracy_score?: number | null
+          sales_accuracy_score?: number | null
+          suggested_price?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pricing_performance_baseline_id_fkey"
+            columns: ["baseline_id"]
+            isOneToOne: false
+            referencedRelation: "product_baselines"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pricing_results: {
         Row: {
           base_elasticity: number

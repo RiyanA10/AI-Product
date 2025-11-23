@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, XCircle, TrendingUp, Package, AlertTriangle, Target, Activity } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import AdminProductDetails from './AdminProductDetails';
+import { formatNumber } from '@/lib/utils';
 
 interface CompetitorStats {
   marketplace: string;
@@ -143,7 +144,7 @@ const AdminCompetitors = () => {
                   <Package className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{analytics.uploadMetrics.totalUploads}</div>
+                  <div className="text-2xl font-bold">{formatNumber(analytics.uploadMetrics.totalUploads, 0)}</div>
                   <p className="text-xs text-muted-foreground">
                     {analytics.uploadMetrics.avgCompetitorsPerProduct} competitors/product
                   </p>
@@ -156,11 +157,11 @@ const AdminCompetitors = () => {
                   <CheckCircle2 className="h-4 w-4 text-green-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-green-600">{analytics.uploadMetrics.withCompetitors}</div>
+                  <div className="text-2xl font-bold text-green-600">{formatNumber(analytics.uploadMetrics.withCompetitors, 0)}</div>
                   <p className="text-xs text-muted-foreground">
                     {analytics.uploadMetrics.totalUploads > 0
-                      ? ((analytics.uploadMetrics.withCompetitors / analytics.uploadMetrics.totalUploads) * 100).toFixed(1)
-                      : 0}% success rate
+                      ? formatNumber((analytics.uploadMetrics.withCompetitors / analytics.uploadMetrics.totalUploads) * 100, 1)
+                      : formatNumber(0, 1)}% success rate
                   </p>
                 </CardContent>
               </Card>
@@ -171,11 +172,11 @@ const AdminCompetitors = () => {
                   <XCircle className="h-4 w-4 text-red-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-red-600">{analytics.uploadMetrics.withoutCompetitors}</div>
+                  <div className="text-2xl font-bold text-red-600">{formatNumber(analytics.uploadMetrics.withoutCompetitors, 0)}</div>
                   <p className="text-xs text-muted-foreground">
                     {analytics.uploadMetrics.totalUploads > 0
-                      ? ((analytics.uploadMetrics.withoutCompetitors / analytics.uploadMetrics.totalUploads) * 100).toFixed(1)
-                      : 0}% no data
+                      ? formatNumber((analytics.uploadMetrics.withoutCompetitors / analytics.uploadMetrics.totalUploads) * 100, 1)
+                      : formatNumber(0, 1)}% no data
                   </p>
                 </CardContent>
               </Card>
@@ -188,7 +189,7 @@ const AdminCompetitors = () => {
                 <CardContent>
                   <div className="text-2xl font-bold">{analytics.scrapingHealth.successRate}%</div>
                   <p className="text-xs text-muted-foreground">
-                    {analytics.scrapingHealth.successfulFetches}/{analytics.scrapingHealth.totalFetches} successful
+                    {formatNumber(analytics.scrapingHealth.successfulFetches, 0)}/{formatNumber(analytics.scrapingHealth.totalFetches, 0)} successful
                   </p>
                 </CardContent>
               </Card>
@@ -204,22 +205,22 @@ const AdminCompetitors = () => {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="border rounded-lg p-4">
                     <p className="text-sm text-muted-foreground mb-1">0 Competitors</p>
-                    <p className="text-2xl font-bold">{analytics.distribution.zero}</p>
+                    <p className="text-2xl font-bold">{formatNumber(analytics.distribution.zero, 0)}</p>
                     <Badge variant="destructive" className="mt-2">No Data</Badge>
                   </div>
                   <div className="border rounded-lg p-4">
                     <p className="text-sm text-muted-foreground mb-1">1 Competitor</p>
-                    <p className="text-2xl font-bold">{analytics.distribution.one}</p>
+                    <p className="text-2xl font-bold">{formatNumber(analytics.distribution.one, 0)}</p>
                     <Badge variant="secondary" className="mt-2">Low</Badge>
                   </div>
                   <div className="border rounded-lg p-4">
                     <p className="text-sm text-muted-foreground mb-1">2-3 Competitors</p>
-                    <p className="text-2xl font-bold">{analytics.distribution.twoToThree}</p>
+                    <p className="text-2xl font-bold">{formatNumber(analytics.distribution.twoToThree, 0)}</p>
                     <Badge variant="default" className="mt-2">Good</Badge>
                   </div>
                   <div className="border rounded-lg p-4">
                     <p className="text-sm text-muted-foreground mb-1">4+ Competitors</p>
-                    <p className="text-2xl font-bold">{analytics.distribution.fourPlus}</p>
+                    <p className="text-2xl font-bold">{formatNumber(analytics.distribution.fourPlus, 0)}</p>
                     <Badge variant="default" className="mt-2">Excellent</Badge>
                   </div>
                 </div>
@@ -295,12 +296,12 @@ const AdminCompetitors = () => {
                   </div>
                   <div className="border rounded-lg p-4">
                     <p className="text-sm text-muted-foreground mb-1">Total Competitors</p>
-                    <p className="text-2xl font-bold">{analytics.dataQuality.totalCompetitors}</p>
+                    <p className="text-2xl font-bold">{formatNumber(analytics.dataQuality.totalCompetitors, 0)}</p>
                     <p className="text-xs text-muted-foreground mt-2">Products scraped</p>
                   </div>
                   <div className="border rounded-lg p-4">
                     <p className="text-sm text-muted-foreground mb-1">With Warnings</p>
-                    <p className="text-2xl font-bold">{analytics.dataQuality.productsWithWarnings}</p>
+                    <p className="text-2xl font-bold">{formatNumber(analytics.dataQuality.productsWithWarnings, 0)}</p>
                     <p className="text-xs text-muted-foreground mt-2">Products flagged</p>
                   </div>
                 </div>
@@ -335,28 +336,28 @@ const AdminCompetitors = () => {
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div>
                           <p className="text-sm text-muted-foreground mb-1">Total Fetches</p>
-                          <p className="text-2xl font-bold">{stat.totalFetches}</p>
+                          <p className="text-2xl font-bold">{formatNumber(stat.totalFetches, 0)}</p>
                         </div>
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <CheckCircle2 className="h-4 w-4 text-green-500" />
                             <p className="text-sm text-muted-foreground">Successful</p>
                           </div>
-                          <p className="text-2xl font-bold text-green-600">{stat.successfulFetches}</p>
+                          <p className="text-2xl font-bold text-green-600">{formatNumber(stat.successfulFetches, 0)}</p>
                         </div>
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <XCircle className="h-4 w-4 text-red-500" />
                             <p className="text-sm text-muted-foreground">Failed</p>
                           </div>
-                          <p className="text-2xl font-bold text-red-600">{stat.failedFetches}</p>
+                          <p className="text-2xl font-bold text-red-600">{formatNumber(stat.failedFetches, 0)}</p>
                         </div>
                         <div>
                           <div className="flex items-center gap-2 mb-1">
                             <TrendingUp className="h-4 w-4 text-blue-500" />
                             <p className="text-sm text-muted-foreground">Avg Products</p>
                           </div>
-                          <p className="text-2xl font-bold text-blue-600">{stat.avgProductsFound}</p>
+                          <p className="text-2xl font-bold text-blue-600">{formatNumber(stat.avgProductsFound, 0)}</p>
                         </div>
                       </div>
                     </div>
