@@ -20,10 +20,10 @@
     --popover: 240 5% 90%;
     --popover-foreground: 240 5% 10%;
 
-    /* Primary - Trust & Intelligence Blue */
+    /* Primary - Brand Violet #7c3aed */
     --primary: 262 83.2558% 57.8431%;
-    --primary-dark: 217 100% 35%;
-    --primary-light: 217 100% 95%;
+    --primary-dark: 262 83.2558% 47%;
+    --primary-light: 262 83.2558% 90%;
     --primary-foreground: 250 100% 97%;
 
     /* Success - Profit Green */
@@ -66,8 +66,8 @@
 
     /* Gradients */
     --gradient-hero: linear-gradient(135deg, hsl(217 100% 50% / 0.1), hsl(258 90% 66% / 0.1));
-    --gradient-primary: linear-gradient(135deg, hsl(217 100% 50%), hsl(217 100% 35%));
-
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-dark)));
+ 
     /* Shadows */
     --shadow-elegant: 0 10px 30px -10px hsl(217 100% 50% / 0.2);
     --shadow-glow: 0 0 40px hsl(217 100% 95% / 0.5);
