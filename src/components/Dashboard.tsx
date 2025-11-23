@@ -7,6 +7,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/integrations/supabase/client';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useToast } from '@/hooks/use-toast';
+import { formatNumber, formatPrice } from '@/lib/utils';
 interface DashboardProps {
   onNavigateToUpload: () => void;
 }
@@ -71,10 +72,10 @@ const Dashboard = ({
       const topOpportunities = pricingResults?.filter(result => Number(result.profit_increase_amount) > 0).sort((a, b) => Number(b.profit_increase_amount) - Number(a.profit_increase_amount)).slice(0, 5).map(result => {
         const baseline = baselines?.find(b => b.id === result.baseline_id);
         return {
-          id: result.id,
-          product: baseline?.product_name || 'Unknown Product',
-          potential: Number(result.profit_increase_amount).toFixed(2)
-        };
+                      id: result.id,
+                      product: baseline?.product_name || 'Unknown Product',
+                      potential: formatNumber(Number(result.profit_increase_amount), 2)
+                    };
       }) || [];
 
       // Create alerts from warnings - deduplicate by baseline_id
@@ -214,7 +215,7 @@ const Dashboard = ({
                 </div>
                 <p className="text-sm text-muted-foreground">Avg Profit Increase</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-bold text-success">+{metrics.profitIncrease.toFixed(1)}%</span>
+                  <span className="text-3xl font-bold text-success">+{formatNumber(metrics.profitIncrease, 1)}%</span>
                   <TrendingUp className="w-5 h-5 text-success" />
                 </div>
                 <p className="text-xs text-muted-foreground">vs. baseline pricing</p>
@@ -227,10 +228,7 @@ const Dashboard = ({
                 </div>
                 <p className="text-sm text-muted-foreground">Total Additional Profit</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-bold text-foreground">{metrics.revenue.toLocaleString(undefined, {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2
-                  })}</span>
+                  <span className="text-3xl font-bold text-foreground">{formatNumber(metrics.revenue, 2)}</span>
                   <span className="text-lg font-semibold text-primary">{metrics.currency}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">from optimized pricing</p>
@@ -243,7 +241,7 @@ const Dashboard = ({
                 </div>
                 <p className="text-sm text-muted-foreground">Products Analyzed</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-bold text-foreground">{metrics.productsOptimized}</span>
+                  <span className="text-3xl font-bold text-foreground">{formatNumber(metrics.productsOptimized, 0)}</span>
                   <Package className="w-5 h-5 text-primary" />
                 </div>
                 <p className="text-xs text-muted-foreground">with pricing recommendations</p>
@@ -256,7 +254,7 @@ const Dashboard = ({
                 </div>
                 <p className="text-sm text-muted-foreground">Active Alerts</p>
                 <div className="flex items-baseline gap-2">
-                  <span className="text-3xl font-bold text-destructive">{metrics.activeAlerts}</span>
+                  <span className="text-3xl font-bold text-destructive">{formatNumber(metrics.activeAlerts, 0)}</span>
                   <AlertCircle className="w-5 h-5 text-destructive" />
                 </div>
                 <p className="text-xs text-muted-foreground">requiring attention</p>
@@ -351,7 +349,7 @@ const Dashboard = ({
                         </div>
                         <div className={`text-right ml-4 ${isOverpriced ? 'text-destructive' : isUnderpriced ? 'text-primary' : 'text-success'}`}>
                           <div className="text-lg font-bold">
-                            {marketPosition > 0 ? '+' : ''}{marketPosition.toFixed(1)}%
+                            {marketPosition > 0 ? '+' : ''}{formatNumber(marketPosition, 1)}%
                           </div>
                           <div className="text-xs opacity-70">vs market</div>
                         </div>
@@ -359,10 +357,10 @@ const Dashboard = ({
                       
                       {/* Visual price comparison */}
                       <div className="relative">
-                        <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                          <span>Low: {marketLow.toFixed(2)}</span>
-                          <span>Avg: {marketAvg.toFixed(2)}</span>
-                          <span>High: {marketHigh.toFixed(2)}</span>
+                        <div className="flex items-center gap-2 text-[10px] lg:text-xs">
+                          <span>Low: {formatPrice(marketLow, baseline.currency)}</span>
+                          <span>Avg: {formatPrice(marketAvg, baseline.currency)}</span>
+                          <span>High: {formatPrice(marketHigh, baseline.currency)}</span>
                         </div>
                         <div className="relative h-3 bg-gradient-to-r from-success/20 via-warning/20 to-destructive/20 rounded-full overflow-hidden">
                           {/* Market range indicator */}

@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ResponsiveContainer } from 'recharts';
+import { formatNumber, formatPrice } from '@/lib/utils';
 
 export default function ResultsPage() {
   const { baselineId } = useParams();
@@ -311,21 +312,21 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Current Price:</span>
                 <span className="text-xl font-bold text-foreground">
-                  {baseline.currency} {baseline.current_price.toFixed(2)}
+                  {formatPrice(baseline.current_price, baseline.currency)}
                 </span>
               </div>
               
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Optimal Price:</span>
                 <span className="text-xl font-bold text-primary">
-                  {baseline.currency} {results.optimal_price.toFixed(2)} ⭐
+                  {formatPrice(results.optimal_price, baseline.currency)} ⭐
                 </span>
               </div>
               
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Suggested Price:</span>
                 <span className="text-xl font-bold text-foreground">
-                  {baseline.currency} {results.suggested_price.toFixed(2)}
+                  {formatPrice(results.suggested_price, baseline.currency)}
                 </span>
               </div>
               
@@ -348,23 +349,23 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Current Monthly Profit:</span>
                 <span className="text-base font-semibold text-foreground">
-                  {baseline.currency} {((baseline.current_price - baseline.cost_per_unit) * baseline.current_quantity).toFixed(2)}
+                  {formatPrice((baseline.current_price - baseline.cost_per_unit) * baseline.current_quantity, baseline.currency)}
                 </span>
               </div>
               
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Expected Monthly Profit:</span>
                 <span className="text-base font-semibold text-success">
-                  {baseline.currency} {results.expected_monthly_profit?.toFixed(2) || '0.00'}
+                  {formatPrice(results.expected_monthly_profit, baseline.currency)}
                 </span>
               </div>
               
               <div className="flex justify-between items-center">
                 <span className="text-sm font-medium text-muted-foreground">Profit Increase:</span>
                 <span className="text-lg font-bold text-success">
-                  +{baseline.currency} {results.profit_increase_amount?.toFixed(2) || '0.00'} 
+                  +{formatPrice(results.profit_increase_amount, baseline.currency)} 
                   <span className="text-sm ml-1">
-                    (+{results.profit_increase_percent?.toFixed(1) || '0.0'}%)
+                    (+{formatNumber(results.profit_increase_percent, 1)}%)
                   </span>
                 </span>
               </div>
@@ -464,7 +465,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                     <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Lowest Price</span>
                   </div>
                   <p className="text-4xl font-bold text-success mb-1">
-                    {baseline.currency} {Math.min(...competitors.filter((c: any) => c.fetch_status === 'success' && c.lowest_price).map((c: any) => c.lowest_price)).toFixed(2)}
+                    {formatPrice(Math.min(...competitors.filter((c: any) => c.fetch_status === 'success' && c.lowest_price).map((c: any) => c.lowest_price)), baseline.currency)}
                   </p>
                   <p className="text-xs text-muted-foreground">Across all marketplaces</p>
                 </div>
@@ -475,7 +476,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                     <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Average Price</span>
                   </div>
                   <p className="text-4xl font-bold text-primary mb-1">
-                    {baseline.currency} {(competitors.filter((c: any) => c.fetch_status === 'success' && c.average_price).reduce((sum: number, c: any) => sum + c.average_price, 0) / competitors.filter((c: any) => c.fetch_status === 'success' && c.average_price).length).toFixed(2)}
+                    {formatPrice(competitors.filter((c: any) => c.fetch_status === 'success' && c.average_price).reduce((sum: number, c: any) => sum + c.average_price, 0) / competitors.filter((c: any) => c.fetch_status === 'success' && c.average_price).length, baseline.currency)}
                   </p>
                   <p className="text-xs text-muted-foreground">Weighted average</p>
                 </div>
@@ -486,7 +487,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                     <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Highest Price</span>
                   </div>
                   <p className="text-4xl font-bold text-destructive mb-1">
-                    {baseline.currency} {Math.max(...competitors.filter((c: any) => c.fetch_status === 'success' && c.highest_price).map((c: any) => c.highest_price)).toFixed(2)}
+                    {formatPrice(Math.max(...competitors.filter((c: any) => c.fetch_status === 'success' && c.highest_price).map((c: any) => c.highest_price)), baseline.currency)}
                   </p>
                   <p className="text-xs text-muted-foreground">Across all marketplaces</p>
                 </div>
@@ -521,22 +522,22 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                     </span>
                   </div>
                   
-                  {comp.fetch_status === 'success' && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="p-3 bg-white/50 rounded-lg border border-success/20">
-                        <span className="text-xs font-medium text-muted-foreground block mb-0.5">Lowest</span>
-                        <span className="text-xl font-bold text-success">{comp.currency} {comp.lowest_price?.toFixed(2)}</span>
+                    {comp.fetch_status === 'success' && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="p-3 bg-white/50 rounded-lg border border-success/20">
+                          <span className="text-xs font-medium text-muted-foreground block mb-0.5">Lowest</span>
+                          <span className="text-xl font-bold text-success">{formatPrice(comp.lowest_price, comp.currency)}</span>
+                        </div>
+                        <div className="p-3 bg-white/50 rounded-lg border border-primary/20">
+                          <span className="text-xs font-medium text-muted-foreground block mb-0.5">Average</span>
+                          <span className="text-xl font-bold text-primary">{formatPrice(comp.average_price, comp.currency)}</span>
+                        </div>
+                        <div className="p-3 bg-white/50 rounded-lg border border-destructive/20">
+                          <span className="text-xs font-medium text-muted-foreground block mb-0.5">Highest</span>
+                          <span className="text-xl font-bold text-destructive">{formatPrice(comp.highest_price, comp.currency)}</span>
+                        </div>
                       </div>
-                      <div className="p-3 bg-white/50 rounded-lg border border-primary/20">
-                        <span className="text-xs font-medium text-muted-foreground block mb-0.5">Average</span>
-                        <span className="text-xl font-bold text-primary">{comp.currency} {comp.average_price?.toFixed(2)}</span>
-                      </div>
-                      <div className="p-3 bg-white/50 rounded-lg border border-destructive/20">
-                        <span className="text-xs font-medium text-muted-foreground block mb-0.5">Highest</span>
-                        <span className="text-xl font-bold text-destructive">{comp.currency} {comp.highest_price?.toFixed(2)}</span>
-                      </div>
-                    </div>
-                  )}
+                    )}
                 </div>
                 ))}
               </div>
@@ -559,14 +560,14 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                 <div className="p-4 bg-gradient-card rounded-lg border border-border hover:border-primary/30 transition-all">
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium text-muted-foreground">Market Average</span>
-                    <span className="text-xl font-bold text-foreground">{baseline.currency} {results.market_average.toFixed(2)}</span>
+                    <span className="text-xl font-bold text-foreground">{formatPrice(results.market_average, baseline.currency)}</span>
                   </div>
                 </div>
                 <div className="p-4 bg-gradient-card rounded-lg border border-border hover:border-primary/30 transition-all">
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium text-muted-foreground">Market Range</span>
                     <span className="text-base font-bold text-foreground">
-                      {baseline.currency} {results.market_lowest.toFixed(2)} - {results.market_highest.toFixed(2)}
+                      {formatPrice(results.market_lowest, baseline.currency)} - {formatPrice(results.market_highest, baseline.currency)}
                     </span>
                   </div>
                 </div>
@@ -574,7 +575,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-bold text-primary">Your Price</span>
                     <span className="text-xl font-bold text-primary">
-                      {baseline.currency} {results.suggested_price.toFixed(2)}
+                      {formatPrice(results.suggested_price, baseline.currency)}
                     </span>
                   </div>
                 </div>
@@ -582,7 +583,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                   <div className="flex justify-between items-center">
                     <span className="text-sm font-medium text-muted-foreground">vs Market</span>
                     <span className={`text-xl font-bold ${results.position_vs_market < 0 ? 'text-success' : 'text-destructive'}`}>
-                      {results.position_vs_market > 0 ? '+' : ''}{results.position_vs_market?.toFixed(1)}%
+                      {results.position_vs_market > 0 ? '+' : ''}{formatNumber(results.position_vs_market, 1)}%
                     </span>
                   </div>
                 </div>

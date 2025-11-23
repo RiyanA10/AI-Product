@@ -1,6 +1,5 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { DOMParser } from 'https://deno.land/x/deno_dom@v0.1.38/deno-dom-wasm.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { z } from 'https://deno.land/x/zod@v3.22.4/mod.ts';
 
@@ -53,7 +52,7 @@ serve(async (req) => {
 
     const { baseline_id } = validation.data;
 
-    console.log('Starting pricing processing request');
+    console.log('Starting enhanced pricing processing');
 
     const { data: baseline, error: baselineError } = await supabase
       .from('product_baselines')
@@ -95,21 +94,17 @@ serve(async (req) => {
           .update({ current_step: 'fetching_competitors' })
           .eq('baseline_id', baseline_id);
 
-        // Call refresh-competitors function for better scraping
-        console.log('Triggering competitor scraping via refresh-competitors...');
+        console.log('Triggering competitor scraping...');
         
-        const { data: refreshData, error: refreshError } = await supabase.functions.invoke(
+        const { error: refreshError } = await supabase.functions.invoke(
           'refresh-competitors',
-          {
-            body: { baseline_id }
-          }
+          { body: { baseline_id } }
         );
 
         if (refreshError) {
           console.error('Error calling refresh-competitors:', refreshError);
-          // Don't fail the whole process, just log and continue
         } else {
-          console.log('✅ Competitor scraping completed successfully');
+          console.log('✅ Competitor scraping completed');
         }
 
         await supabase.from('processing_status')
@@ -122,7 +117,7 @@ serve(async (req) => {
           .update({ status: 'completed', current_step: 'complete' })
           .eq('baseline_id', baseline_id);
 
-        console.log('Processing completed successfully');
+        console.log('✅ Enhanced pricing calculation completed');
       } catch (error: any) {
         console.error('Background processing error:', error);
         await supabase.from('processing_status')
@@ -131,14 +126,13 @@ serve(async (req) => {
       }
     })();
 
-    // Use Deno EdgeRuntime for background tasks
     const edgeRuntime = (globalThis as any).EdgeRuntime;
     if (edgeRuntime?.waitUntil) {
       edgeRuntime.waitUntil(backgroundTask);
     }
 
     return new Response(
-      JSON.stringify({ success: true, message: 'Processing started', baseline_id }),
+      JSON.stringify({ success: true, message: 'Enhanced pricing processing started', baseline_id }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
@@ -160,125 +154,198 @@ async function fetchInflationRate(currency: string): Promise<{ rate: number; sou
   return { rate: 0.025, source: 'IMF Global Estimate' };
 }
 
-function normalizeProductName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/\([^)]*\)/g, '') // Remove parentheses content
-    .replace(/\s*-\s*.*/g, '') // Remove dashes and everything after
-    .replace(/[^\w\s\u0600-\u06FF]/g, ' ') // Keep only alphanumeric and Arabic
-    .replace(/\b(the|with|for|and|or)\b/gi, '') // Remove common words
-    .replace(/\s+/g, ' ')
-    .trim();
+// Statistical outlier removal using IQR method
+function removeOutliers(prices: number[]): { cleaned: number[]; removed: number } {
+  if (prices.length < 4) return { cleaned: prices, removed: 0 };
+  
+  const sorted = [...prices].sort((a, b) => a - b);
+  const q1Index = Math.floor(sorted.length * 0.25);
+  const q3Index = Math.floor(sorted.length * 0.75);
+  
+  const q1 = sorted[q1Index];
+  const q3 = sorted[q3Index];
+  const iqr = q3 - q1;
+  
+  const lowerBound = q1 - 1.5 * iqr;
+  const upperBound = q3 + 1.5 * iqr;
+  
+  const filtered = prices.filter(p => p >= lowerBound && p <= upperBound);
+  
+  console.log(`🔍 Outlier removal: ${prices.length} prices → ${filtered.length} after filtering`);
+  console.log(`   Removed range outside [${lowerBound.toFixed(2)}, ${upperBound.toFixed(2)}]`);
+  
+  return {
+    cleaned: filtered.length > 0 ? filtered : prices,
+    removed: prices.length - filtered.length
+  };
 }
 
-function levenshteinDistance(str1: string, str2: string): number {
-  const matrix: number[][] = [];
-  
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  
-  for (let i = 1; i <= str2.length; i++) {
-    for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
+// Calculate weighted market stats from competitor products
+function calculateWeightedMarketStats(
+  products: any[],
+  aggregates: any[]
+): { 
+  lowest: number; 
+  average: number; 
+  highest: number; 
+  confidence: string;
+  outliersRemoved: number;
+} {
+  if (!products || products.length === 0) {
+    // Fallback to aggregate data
+    console.log('⚠️ No granular products, using aggregates');
+    const allPrices: number[] = [];
+    aggregates?.forEach(comp => {
+      if (comp.lowest_price) allPrices.push(comp.lowest_price);
+      if (comp.average_price) allPrices.push(comp.average_price);
+      if (comp.highest_price) allPrices.push(comp.highest_price);
+    });
+    
+    if (allPrices.length === 0) {
+      return { lowest: 0, average: 0, highest: 0, confidence: 'none', outliersRemoved: 0 };
     }
+    
+    const { cleaned, removed } = removeOutliers(allPrices);
+    return {
+      lowest: Math.min(...cleaned),
+      average: cleaned.reduce((a, b) => a + b, 0) / cleaned.length,
+      highest: Math.max(...cleaned),
+      confidence: 'low',
+      outliersRemoved: removed
+    };
   }
   
-  return matrix[str2.length][str1.length];
-}
-
-function calculateSimilarity(product1: string, product2: string): number {
-  const norm1 = normalizeProductName(product1);
-  const norm2 = normalizeProductName(product2);
+  console.log(`📊 Analyzing ${products.length} competitor products`);
   
-  if (norm1 === norm2) return 1.0;
+  // Weight each product by similarity score
+  let weightedSum = 0;
+  let totalWeight = 0;
+  const prices: number[] = [];
   
-  // Remove model years/numbers for better matching (e.g., "17" vs "15", "12")
-  const withoutYears1 = norm1.replace(/\b(1[0-9]|2[0-9])\b/g, '');
-  const withoutYears2 = norm2.replace(/\b(1[0-9]|2[0-9])\b/g, '');
+  products.forEach(prod => {
+    const weight = prod.similarity_score;
+    weightedSum += prod.price * weight;
+    totalWeight += weight;
+    prices.push(prod.price);
+  });
   
-  const distance = levenshteinDistance(withoutYears1, withoutYears2);
-  const maxLength = Math.max(withoutYears1.length, withoutYears2.length);
+  // Remove statistical outliers
+  const { cleaned, removed } = removeOutliers(prices);
   
-  return 1 - (distance / maxLength);
-}
-
-function extractPrice(text: string, expectedCurrency: string): { price: number; confidence: number } | null {
-  if (!text) return null;
-  
-  // Clean up text - be aggressive with removal
-  text = text.replace(/from|as low as|starting at|save|off|each|per|month|\/mo/gi, '').trim();
-  
-  // Currency patterns with multiple formats
-  const patterns = [
-    // SAR formats
-    /(?:SAR|SR|ريال|ر\.س\.?)\s*([0-9,]+\.?[0-9]*)/i,
-    /([0-9,]+\.?[0-9]*)\s*(?:SAR|SR|ريال|ر\.س\.?)/i,
-    // USD formats
-    /\$\s*([0-9,]+\.?[0-9]*)/,
-    /([0-9,]+\.?[0-9]*)\s*(?:USD|usd)/,
-    // Generic number with decimals
-    /\b([0-9,]+\.[0-9]{2})\b/,
-    // Generic number (fallback)
-    /\b([0-9,]+)\b/
-  ];
-  
-  let bestMatch: { price: number; confidence: number } | null = null;
-  
-  for (let i = 0; i < patterns.length; i++) {
-    const match = text.match(patterns[i]);
-    if (match) {
-      const priceStr = match[1].replace(/,/g, '');
-      const price = parseFloat(priceStr);
-      
-      if (!isNaN(price) && price > 0) {
-        // Confidence based on pattern quality and currency match
-        let confidence = 1.0 - (i * 0.1); // Earlier patterns have higher confidence
-        
-        // Check if currency matches expected
-        if (expectedCurrency === 'SAR' && match[0].match(/SAR|SR|ريال|ر\.س/i)) {
-          confidence += 0.2;
-        } else if (expectedCurrency === 'USD' && match[0].match(/\$|USD/i)) {
-          confidence += 0.2;
-        }
-        
-        if (!bestMatch || confidence > bestMatch.confidence) {
-          bestMatch = { price, confidence: Math.min(confidence, 1.0) };
-        }
-      }
+  // Recalculate weighted average with cleaned prices
+  let cleanedWeightedSum = 0;
+  let cleanedTotalWeight = 0;
+  products.forEach(prod => {
+    if (cleaned.includes(prod.price)) {
+      const weight = prod.similarity_score;
+      cleanedWeightedSum += prod.price * weight;
+      cleanedTotalWeight += weight;
     }
-  }
+  });
   
-  return bestMatch;
+  const weightedAverage = cleanedTotalWeight > 0 ? cleanedWeightedSum / cleanedTotalWeight : 0;
+  
+  return {
+    lowest: Math.min(...cleaned),
+    average: weightedAverage,
+    highest: Math.max(...cleaned),
+    confidence: products.length >= 10 ? 'high' : products.length >= 5 ? 'medium' : 'low',
+    outliersRemoved: removed
+  };
 }
 
-// Old scraping functions removed - now using refresh-competitors edge function
+// Calculate profit-maximizing price using elasticity theory
+function calculateProfitMaximizingPrice(
+  cost: number,
+  elasticity: number,
+  currentPrice: number,
+  marketAverage: number,
+  marketLowest: number,
+  marketHighest: number
+): { 
+  theoreticalOptimal: number;
+  marketAdjusted: number;
+  reasoning: string;
+} {
+  // Revenue-maximizing price from elasticity theory
+  // Formula: P* = Cost / (1 + 1/elasticity)
+  const theoreticalOptimal = cost / (1 + 1 / elasticity);
+  
+  console.log(`💡 Theoretical optimal price: ${theoreticalOptimal.toFixed(2)}`);
+  console.log(`   Based on elasticity ${elasticity} and cost ${cost}`);
+  
+  // Safety bounds
+  const minPrice = cost * 1.10; // Minimum 10% markup
+  const maxPrice = marketHighest * 1.2; // Don't go more than 20% above market
+  
+  // Blend theoretical with market intelligence (60% theory, 40% market)
+  let marketAdjusted = (theoreticalOptimal * 0.6) + (marketAverage * 0.4);
+  
+  let reasoning = '';
+  
+  // Apply bounds and reasoning
+  if (marketAdjusted < minPrice) {
+    marketAdjusted = minPrice;
+    reasoning = `Adjusted to minimum 10% markup for profitability`;
+  } else if (marketAdjusted > maxPrice) {
+    marketAdjusted = maxPrice;
+    reasoning = `Capped at 20% above market highest to remain competitive`;
+  } else if (marketLowest > 0 && marketAdjusted < marketLowest * 0.9) {
+    marketAdjusted = marketLowest * 0.95;
+    reasoning = `Positioned 5% below market lowest for competitive edge`;
+  } else {
+    reasoning = `Balanced between profit maximization (${theoreticalOptimal.toFixed(0)}) and market positioning (${marketAverage.toFixed(0)})`;
+  }
+  
+  console.log(`🎯 Market-adjusted price: ${marketAdjusted.toFixed(2)}`);
+  console.log(`   Reasoning: ${reasoning}`);
+  
+  return {
+    theoreticalOptimal,
+    marketAdjusted,
+    reasoning
+  };
+}
 
 async function calculateOptimalPrice(
   supabase: any,
   baseline: any,
   inflationRate: number
 ) {
-  const { data: competitorData } = await supabase
+  console.log('=== Starting Enhanced Price Calculation ===');
+  
+  // Fetch competitor products (granular data with similarity scores)
+  const { data: competitorProducts } = await supabase
+    .from('competitor_products')
+    .select('price, similarity_score, price_ratio, marketplace')
+    .eq('baseline_id', baseline.id)
+    .gte('similarity_score', 0.5); // Only high-confidence matches
+  
+  console.log(`Found ${competitorProducts?.length || 0} competitor products`);
+  
+  // Fetch aggregated data (fallback)
+  const { data: competitorAggregates } = await supabase
     .from('competitor_prices')
     .select('*')
     .eq('baseline_id', baseline.id)
     .eq('fetch_status', 'success');
 
-  if (!competitorData || competitorData.length === 0) {
-    console.log('No competitor data available, using baseline price');
+  // Calculate market stats with outlier detection and weighting
+  const marketStats = calculateWeightedMarketStats(
+    competitorProducts || [],
+    competitorAggregates || []
+  );
+  
+  console.log('📈 Market stats (cleaned):', {
+    lowest: marketStats.lowest.toFixed(2),
+    average: marketStats.average.toFixed(2),
+    highest: marketStats.highest.toFixed(2),
+    confidence: marketStats.confidence,
+    outliersRemoved: marketStats.outliersRemoved
+  });
+  
+  if (marketStats.average === 0) {
+    console.log('⚠️ No competitor data available');
     
     await supabase.from('pricing_results').insert({
       baseline_id: baseline.id,
@@ -298,22 +365,27 @@ async function calculateOptimalPrice(
     return;
   }
 
-  const marketStats = calculateMarketStats(competitorData);
-  const inflationAdjustment = 1 + inflationRate;
-  const inflationAdjustedPrice = baseline.current_price * inflationAdjustment;
-
-  const avgCompetitorPrice = marketStats.average;
-  const competitorFactor = avgCompetitorPrice / baseline.current_price;
-
-  const calibratedElasticity = baseline.base_elasticity * (1 + (competitorFactor - 1) * 0.3);
-
-  const optimalPrice = inflationAdjustedPrice * Math.pow(
-    (1 + competitorFactor) / 2,
-    1 / (1 + Math.abs(calibratedElasticity))
+  // Calculate profit-maximizing price
+  const profitCalc = calculateProfitMaximizingPrice(
+    baseline.cost_per_unit,
+    baseline.base_elasticity,
+    baseline.current_price,
+    marketStats.average,
+    marketStats.lowest,
+    marketStats.highest
   );
-
-  const suggestedPrice = Math.round(optimalPrice * 100) / 100;
-
+  
+  // Apply inflation adjustment
+  const inflationAdjustment = 1 + inflationRate;
+  const inflationAdjustedPrice = profitCalc.marketAdjusted * inflationAdjustment;
+  
+  // Calculate competitor factor for context
+  const competitorFactor = marketStats.average / baseline.current_price;
+  const calibratedElasticity = baseline.base_elasticity * (1 + (competitorFactor - 1) * 0.3);
+  
+  const suggestedPrice = Math.round(inflationAdjustedPrice * 100) / 100;
+  
+  // Calculate profit projections
   const currentProfit = (baseline.current_price - baseline.cost_per_unit) * baseline.current_quantity;
   const newQuantity = baseline.current_quantity * Math.pow(
     baseline.current_price / suggestedPrice,
@@ -322,16 +394,22 @@ async function calculateOptimalPrice(
   const newProfit = (suggestedPrice - baseline.cost_per_unit) * newQuantity;
   const profitIncrease = newProfit - currentProfit;
   const profitIncreasePercent = (profitIncrease / currentProfit) * 100;
-
+  
   const positionVsMarket = ((suggestedPrice - marketStats.average) / marketStats.average) * 100;
+  
+  console.log('=== Price Calculation Complete ===');
+  console.log(`💰 Theoretical optimal: ${profitCalc.theoreticalOptimal.toFixed(2)}`);
+  console.log(`📊 Market adjusted: ${profitCalc.marketAdjusted.toFixed(2)}`);
+  console.log(`🎯 Final suggested: ${suggestedPrice.toFixed(2)}`);
+  console.log(`📝 Reasoning: ${profitCalc.reasoning}`);
+  console.log(`💵 Expected profit increase: ${profitIncreasePercent.toFixed(1)}%`);
 
-  console.log('Price calculation complete');
-
+  // Insert pricing results
   await supabase.from('pricing_results').insert({
     baseline_id: baseline.id,
     merchant_id: baseline.merchant_id,
     currency: baseline.currency,
-    optimal_price: optimalPrice,
+    optimal_price: profitCalc.theoreticalOptimal,
     suggested_price: suggestedPrice,
     inflation_rate: inflationRate,
     inflation_adjustment: inflationAdjustment,
@@ -346,24 +424,17 @@ async function calculateOptimalPrice(
     profit_increase_amount: profitIncrease,
     profit_increase_percent: profitIncreasePercent
   });
-}
-
-function calculateMarketStats(competitorData: any[]): { lowest: number; average: number; highest: number } {
-  const allPrices: number[] = [];
   
-  competitorData.forEach(comp => {
-    if (comp.lowest_price) allPrices.push(comp.lowest_price);
-    if (comp.average_price) allPrices.push(comp.average_price);
-    if (comp.highest_price) allPrices.push(comp.highest_price);
+  // Insert performance tracking (predicted values)
+  await supabase.from('pricing_performance').insert({
+    baseline_id: baseline.id,
+    merchant_id: baseline.merchant_id,
+    suggested_price: suggestedPrice,
+    predicted_sales: Math.round(newQuantity),
+    market_average: marketStats.average,
+    market_lowest: marketStats.lowest,
+    market_highest: marketStats.highest
   });
   
-  if (allPrices.length === 0) {
-    return { lowest: 0, average: 0, highest: 0 };
-  }
-  
-  return {
-    lowest: Math.min(...allPrices),
-    average: allPrices.reduce((a, b) => a + b, 0) / allPrices.length,
-    highest: Math.max(...allPrices)
-  };
+  console.log('✅ Results and performance tracking saved');
 }

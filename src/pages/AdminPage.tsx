@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Shield, Users, Package, Activity, Settings } from 'lucide-react';
+import { Shield, Users, Package, Activity, Settings, BarChart3 } from 'lucide-react';
 import AdminOverview from '@/components/admin/AdminOverview';
 import AdminUsers from '@/components/admin/AdminUsers';
 import AdminProducts from '@/components/admin/AdminProducts';
 import AdminCompetitors from '@/components/admin/AdminCompetitors';
 import AdminSettings from '@/components/admin/AdminSettings';
+import AdminPerformance from '@/components/admin/AdminPerformance';
 
 const AdminPage = () => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -27,7 +28,7 @@ const AdminPage = () => {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
+          <TabsList className="grid w-full grid-cols-6 lg:w-auto lg:inline-grid">
             <TabsTrigger value="overview" className="gap-2">
               <Activity className="h-4 w-4" />
               <span className="hidden sm:inline">Overview</span>
@@ -43,6 +44,10 @@ const AdminPage = () => {
             <TabsTrigger value="competitors" className="gap-2">
               <Activity className="h-4 w-4" />
               <span className="hidden sm:inline">Competitors</span>
+            </TabsTrigger>
+            <TabsTrigger value="performance" className="gap-2">
+              <BarChart3 className="h-4 w-4" />
+              <span className="hidden sm:inline">Performance</span>
             </TabsTrigger>
             <TabsTrigger value="settings" className="gap-2">
               <Settings className="h-4 w-4" />
@@ -64,6 +69,10 @@ const AdminPage = () => {
 
           <TabsContent value="competitors" className="space-y-6">
             <AdminCompetitors />
+          </TabsContent>
+
+          <TabsContent value="performance" className="space-y-6">
+            <AdminPerformance />
           </TabsContent>
 
           <TabsContent value="settings" className="space-y-6">

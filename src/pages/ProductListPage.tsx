@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { formatNumber, formatPrice } from '@/lib/utils';
 
 interface ProductWithResults {
   id: string;
@@ -232,12 +233,12 @@ export default function ProductListPage() {
                       <p className="text-xs lg:text-sm text-muted-foreground truncate">{product.category}</p>
                     </div>
                     <div className="col-span-2 text-center">
-                      <p className="font-semibold text-xs lg:text-sm">{product.currency} {product.current_price.toFixed(2)}</p>
+                      <p className="font-semibold text-xs lg:text-sm">{formatPrice(product.current_price, product.currency)}</p>
                     </div>
                     <div className="col-span-2 text-center">
                       {product.optimal_price ? (
                         <div>
-                          <p className="font-semibold text-primary text-xs lg:text-sm">{product.currency} {product.optimal_price.toFixed(2)}</p>
+                          <p className="font-semibold text-primary text-xs lg:text-sm">{formatPrice(product.optimal_price, product.currency)}</p>
                           <div className="flex items-center justify-center gap-1 text-[10px] lg:text-xs">
                             {isPriceIncrease ? (
                               <TrendingUp className="w-2.5 h-2.5 lg:w-3 lg:h-3 text-success" />
@@ -245,7 +246,7 @@ export default function ProductListPage() {
                               <TrendingDown className="w-2.5 h-2.5 lg:w-3 lg:h-3 text-destructive" />
                             )}
                             <span className={isPriceIncrease ? 'text-success' : 'text-destructive'}>
-                              {priceChange > 0 ? '+' : ''}{priceChange.toFixed(1)}%
+                              {priceChange > 0 ? '+' : ''}{formatNumber(priceChange, 1)}%
                             </span>
                           </div>
                         </div>
@@ -255,7 +256,7 @@ export default function ProductListPage() {
                     </div>
                     <div className="col-span-2 text-center">
                       {product.profit_increase ? (
-                        <p className="font-semibold text-success text-xs lg:text-sm">+{product.currency} {product.profit_increase.toFixed(0)}/mo</p>
+                        <p className="font-semibold text-success text-xs lg:text-sm">+{formatPrice(product.profit_increase, product.currency)}/mo</p>
                       ) : (
                         <span className="text-muted-foreground text-xs">-</span>
                       )}
@@ -315,23 +316,23 @@ export default function ProductListPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-xs sm:text-sm text-muted-foreground">Current:</span>
-                    <span className="font-semibold text-sm sm:text-base">{product.currency} {product.current_price.toFixed(2)}</span>
+                    <span className="font-semibold text-sm sm:text-base">{formatPrice(product.current_price, product.currency)}</span>
                   </div>
                   {product.optimal_price && (
                     <>
                       <div className="flex justify-between items-center">
                         <span className="text-xs sm:text-sm text-muted-foreground">Optimal:</span>
                         <div className="text-right">
-                          <span className="font-semibold text-primary text-sm sm:text-base">{product.currency} {product.optimal_price.toFixed(2)}</span>
+                          <span className="font-semibold text-primary text-sm sm:text-base">{formatPrice(product.optimal_price, product.currency)}</span>
                           <span className={`ml-2 text-xs ${isPriceIncrease ? 'text-success' : 'text-destructive'}`}>
-                            ({priceChange > 0 ? '+' : ''}{priceChange.toFixed(1)}%)
+                            ({priceChange > 0 ? '+' : ''}{formatNumber(priceChange, 1)}%)
                           </span>
                         </div>
                       </div>
                       {product.profit_increase && (
                         <div className="flex justify-between items-center">
                           <span className="text-xs sm:text-sm text-muted-foreground">Potential:</span>
-                          <span className="font-semibold text-success text-sm sm:text-base">+{product.currency} {product.profit_increase.toFixed(0)}/month</span>
+                          <span className="font-semibold text-success text-sm sm:text-base">+{formatPrice(product.profit_increase, product.currency)}/month</span>
                         </div>
                       )}
                     </>
