@@ -352,7 +352,8 @@ function calculateProfitMaximizingPrice(
   currentPrice: number,
   marketAverage: number,
   marketLowest: number,
-  marketHighest: number
+  marketHighest: number,
+  inflationRate: number
 ): { 
   theoreticalOptimal: number;
   marketAdjusted: number;
@@ -365,12 +366,16 @@ function calculateProfitMaximizingPrice(
   console.log(`💡 Theoretical optimal price: ${theoreticalOptimal.toFixed(2)}`);
   console.log(`   Based on elasticity ${elasticity} and cost ${cost}`);
   
-  // Safety bounds
+  // Apply inflation adjustment to market boundaries FIRST
+  const inflationMultiplier = 1 + inflationRate;
+  const inflationAdjustedHighest = marketHighest * inflationMultiplier;
+  
+  // Safety bounds (with inflation considered)
   const minPrice = cost * 1.10; // Minimum 10% markup
-  const maxPrice = marketHighest * 1.2; // Don't go more than 20% above market
+  const maxPrice = inflationAdjustedHighest * 1.15; // Max 15% above inflation-adjusted market highest
   
   // Blend theoretical with market intelligence (60% theory, 40% market)
-  let marketAdjusted = (theoreticalOptimal * 0.6) + (marketAverage * 0.4);
+  let marketAdjusted = (theoreticalOptimal * 0.6) + (marketAverage * inflationMultiplier * 0.4);
   
   let reasoning = '';
   
@@ -380,15 +385,15 @@ function calculateProfitMaximizingPrice(
     reasoning = `Adjusted to minimum 10% markup for profitability`;
   } else if (marketAdjusted > maxPrice) {
     marketAdjusted = maxPrice;
-    reasoning = `Capped at 20% above market highest to remain competitive`;
+    reasoning = `Capped at 15% above inflation-adjusted market highest (${inflationAdjustedHighest.toFixed(0)}) to remain competitive`;
   } else if (marketLowest > 0 && marketAdjusted < marketLowest * 0.9) {
     marketAdjusted = marketLowest * 0.95;
     reasoning = `Positioned 5% below market lowest for competitive edge`;
   } else {
-    reasoning = `Balanced between profit maximization (${theoreticalOptimal.toFixed(0)}) and market positioning (${marketAverage.toFixed(0)})`;
+    reasoning = `Balanced between profit optimization and market positioning`;
   }
   
-  console.log(`🎯 Market-adjusted price: ${marketAdjusted.toFixed(2)}`);
+  console.log(`🎯 Final price (inflation-adjusted): ${marketAdjusted.toFixed(2)}`);
   console.log(`   Reasoning: ${reasoning}`);
   
   return {
@@ -410,7 +415,7 @@ async function calculateOptimalPrice(
     .from('competitor_products')
     .select('price, similarity_score, price_ratio, marketplace')
     .eq('baseline_id', baseline.id)
-    .gte('similarity_score', 0.5); // Only high-confidence matches
+    .gte('similarity_score', 0.3); // Only products with > 30% similarity
   
   console.log(`Found ${competitorProducts?.length || 0} competitor products`);
   
@@ -487,25 +492,23 @@ async function calculateOptimalPrice(
     return;
   }
 
-  // Calculate profit-maximizing price
+  // Calculate profit-maximizing price (inflation already applied inside)
   const profitCalc = calculateProfitMaximizingPrice(
     baseline.cost_per_unit,
     baseline.base_elasticity,
     baseline.current_price,
     marketStats.average,
     marketStats.lowest,
-    marketStats.highest
+    marketStats.highest,
+    inflationRate
   );
   
-  // Apply inflation adjustment
   const inflationAdjustment = 1 + inflationRate;
-  const inflationAdjustedPrice = profitCalc.marketAdjusted * inflationAdjustment;
+  const suggestedPrice = Math.round(profitCalc.marketAdjusted * 100) / 100;
   
   // Calculate competitor factor for context
   const competitorFactor = marketStats.average / baseline.current_price;
   const calibratedElasticity = baseline.base_elasticity * (1 + (competitorFactor - 1) * 0.3);
-  
-  const suggestedPrice = Math.round(inflationAdjustedPrice * 100) / 100;
   
   // Calculate profit projections
   const currentProfit = (baseline.current_price - baseline.cost_per_unit) * baseline.current_quantity;
