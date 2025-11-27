@@ -31,6 +31,37 @@ interface MarketplaceConfig {
 }
 
 const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
+  'google-shopping': {
+    name: 'Google Shopping',
+    searchUrl: 'https://www.google.com/search?tbm=shop&q=',
+    scrapingBeeOptions: {
+      renderJs: true,
+      wait: 3000,
+      blockResources: true,
+      blockAds: true,
+      countryCode: 'us'
+    },
+    selectors: {
+      containers: [
+        '.sh-dgr__content',
+        '[data-docid]',
+        '.sh-dlr__list-result',
+        'div[data-sh-pr]'
+      ],
+      productName: [
+        'h3',
+        '.sh-np__product-title',
+        'div[role="heading"]',
+        '[data-sh-pr] h4'
+      ],
+      price: [
+        '.a8Pemb',
+        'span[aria-label*="$"]',
+        '[data-sh-pr] span:first-child',
+        'b'
+      ]
+    }
+  },
   'amazon': {
     name: 'Amazon.sa',
     searchUrl: 'https://www.amazon.sa/s?k=',
@@ -828,6 +859,8 @@ serve(async (req) => {
       : ['amazon-us', 'walmart', 'ebay', 'target'];
 
     const results = [];
+    const lowConfidenceProducts: string[] = [];
+    let foundValidProducts = false;
 
     for (const marketplaceKey of marketplaceKeys) {
       try {
@@ -856,6 +889,15 @@ serve(async (req) => {
         }
         
         if (products.length > 0) {
+          foundValidProducts = true;
+          
+          // Track low confidence products for potential Google fallback
+          products.forEach(p => {
+            if (p.similarity < 0.30) {
+              lowConfidenceProducts.push(p.name);
+            }
+          });
+          
           // Insert each product into competitor_products table
           const productRows = products.map((product, index) => ({
             baseline_id,
@@ -944,6 +986,93 @@ serve(async (req) => {
           status: 'failed',
           error: error?.message || 'Unknown error'
         });
+      }
+    }
+
+    // GOOGLE FALLBACK: If no valid products found across all marketplaces, try Google Shopping
+    if (!foundValidProducts || lowConfidenceProducts.length > 0) {
+      console.log('\n=== GOOGLE FALLBACK TRIGGERED ===');
+      console.log(`Reason: ${!foundValidProducts ? 'No products found' : `${lowConfidenceProducts.length} low confidence products`}`);
+      
+      try {
+        const googleConfig = MARKETPLACE_CONFIGS['google-shopping'];
+        let googleProducts = await scrapeMarketplacePrices(
+          googleConfig,
+          coreProductName,
+          baseline.product_name,
+          baseline.current_price,
+          baseline.currency
+        );
+        
+        // Filter out wholesale/B2B sites
+        const excludedDomains = ['alibaba.com', 'aliexpress.com', 'dhgate.com', 'made-in-china.com', '1688.com'];
+        googleProducts = googleProducts.filter(product => {
+          const url = product.url?.toLowerCase() || '';
+          const hasExcludedDomain = excludedDomains.some(domain => url.includes(domain));
+          if (hasExcludedDomain) {
+            console.log(`⏭️ Filtered wholesale site: ${url}`);
+          }
+          return !hasExcludedDomain;
+        });
+        
+        // Apply accessory filtering
+        if (!baselineIsAccessory && googleProducts.length > 0) {
+          const beforeFilter = googleProducts.length;
+          googleProducts = googleProducts.filter(product => !isAccessoryOrReplacement(product.name));
+          console.log(`🔍 Google filtering: ${beforeFilter} → ${googleProducts.length} products`);
+        }
+        
+        if (googleProducts.length > 0) {
+          const productRows = googleProducts.map((product, index) => ({
+            baseline_id,
+            merchant_id: baseline.merchant_id,
+            marketplace: 'google-shopping',
+            product_name: product.name,
+            price: product.price,
+            similarity_score: product.similarity,
+            price_ratio: product.priceRatio,
+            product_url: product.url,
+            currency: baseline.currency,
+            rank: index + 1
+          }));
+          
+          await supabase.from('competitor_products').insert(productRows);
+          
+          const prices = googleProducts.map(p => p.price);
+          await supabase.from('competitor_prices').insert({
+            baseline_id,
+            merchant_id: baseline.merchant_id,
+            marketplace: 'google-shopping',
+            lowest_price: Math.min(...prices),
+            average_price: prices.reduce((a, b) => a + b, 0) / prices.length,
+            highest_price: Math.max(...prices),
+            currency: baseline.currency,
+            products_found: googleProducts.length,
+            fetch_status: 'success'
+          });
+          
+          results.push({
+            marketplace: 'Google Shopping (Fallback)',
+            status: 'success',
+            products_found: googleProducts.length
+          });
+          
+          console.log(`✓ Google fallback found ${googleProducts.length} products`);
+        } else {
+          // Add to manual review queue
+          await supabase.from('manual_review_queue').insert({
+            baseline_id,
+            merchant_id: baseline.merchant_id,
+            product_name: baseline.product_name,
+            attempted_marketplaces: [...marketplaceKeys, 'google-shopping'],
+            google_fallback_attempted: true,
+            status: 'pending'
+          });
+          
+          console.log('⚠️ Added to manual review queue');
+        }
+      } catch (error) {
+        console.error('Google fallback error:', error);
       }
     }
 

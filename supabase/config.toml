@@ -9,3 +9,5 @@ project_id = "vysewjocqjndkagngeum"
 [functions.admin]
 
 [functions.suggest-category]
+
+[functions.validate-competitor]
