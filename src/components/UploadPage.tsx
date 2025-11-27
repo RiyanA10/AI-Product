@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Check, LogOut, Loader2, Edit2, Sparkles } from 'lucide-react';
+import { Check, LogOut, Loader2, Edit2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -47,17 +47,14 @@ export const UploadPage = () => {
     cost_per_unit: '',
     currency: 'SAR',
   });
-  const [completedSteps, setCompletedSteps] = useState<Set<Step>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
-  const [suggestedCategory, setSuggestedCategory] = useState<string | null>(null);
-  const [useAICategorySuggestion, setUseAICategorySuggestion] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
 
   const steps: Step[] = ['product_name', 'category', 'current_price', 'current_quantity', 'cost_per_unit', 'currency'];
+  const [completedSteps, setCompletedSteps] = useState<Set<Step>>(new Set());
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -81,35 +78,6 @@ export const UploadPage = () => {
       currency: 'Which currency do you use?',
     };
     return labels[step];
-  };
-
-  const suggestCategoryFromAI = async (productName: string) => {
-    if (!useAICategorySuggestion) return; // Skip if toggle is off
-    
-    try {
-      setIsSuggestingCategory(true);
-      const { data, error } = await supabase.functions.invoke('suggest-category', {
-        body: { product_name: productName }
-      });
-
-      if (error) throw error;
-
-      if (data?.suggested_category) {
-        setSuggestedCategory(data.suggested_category);
-        setFormData(prev => ({ ...prev, category: data.suggested_category }));
-        toast({
-          title: '✨ Category suggested',
-          description: `AI suggests: ${data.suggested_category}`,
-        });
-      } else {
-        setSuggestedCategory(null);
-      }
-    } catch (error) {
-      console.error('Error suggesting category:', error);
-      setSuggestedCategory(null);
-    } finally {
-      setIsSuggestingCategory(false);
-    }
   };
 
   const handleNext = async () => {
@@ -158,7 +126,6 @@ export const UploadPage = () => {
     });
     setCompletedSteps(newCompleted);
     setCurrentStep(step);
-    setSuggestedCategory(null);
   };
 
   const handleKeyPress = async (e: React.KeyboardEvent) => {
@@ -336,48 +303,20 @@ export const UploadPage = () => {
                 <div className="flex-1">
                   <p className="text-sm text-muted-foreground mb-3">
                     {getStepLabel(currentStep)}
-                    {currentStep === 'category' && isSuggestingCategory && (
-                      <span className="ml-2 inline-flex items-center gap-1 text-primary">
-                        <Sparkles className="w-3 h-3 animate-pulse" />
-                        AI is thinking...
-                      </span>
-                    )}
                   </p>
                   
                   {currentStep === 'category' ? (
                     <div className="space-y-3">
-                      <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={useAICategorySuggestion}
-                          onChange={(e) => {
-                            setUseAICategorySuggestion(e.target.checked);
-                            if (e.target.checked && formData.product_name) {
-                              suggestCategoryFromAI(formData.product_name);
-                            }
-                          }}
-                          className="w-4 h-4 rounded"
-                        />
-                        <Sparkles className="w-4 h-4 text-primary" />
-                        <span className="text-muted-foreground">Auto-suggest with AI</span>
-                      </label>
-                      {suggestedCategory && (
-                        <div className="flex items-center gap-2 text-sm bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
-                          <Sparkles className="w-4 h-4 text-primary" />
-                          <span className="text-muted-foreground">AI suggested:</span>
-                          <span className="font-medium text-primary">{suggestedCategory}</span>
-                        </div>
-                      )}
                       <Select
                         value={formData.category}
                         onValueChange={(value) => {
-                          setFormData({ ...formData, category: value });
-                          setTimeout(() => handleNext(), 100);
+                          setFormData(prev => ({ ...prev, category: value }));
+                          setCompletedSteps(prev => new Set([...prev, 'category']));
+                          setCurrentStep('current_price');
                         }}
-                        disabled={isSuggestingCategory}
                       >
                         <SelectTrigger className="w-full bg-background border-2 border-primary/20 focus:border-primary rounded-2xl px-4 py-6 text-left shadow-sm">
-                          <SelectValue placeholder={isSuggestingCategory ? "AI is analyzing..." : "Select a category"} />
+                          <SelectValue placeholder="Select a category" />
                         </SelectTrigger>
                         <SelectContent className="bg-background max-h-[60vh] overflow-y-auto z-[100]" position="popper" sideOffset={8}>
                           {CATEGORIES.map((cat) => (
