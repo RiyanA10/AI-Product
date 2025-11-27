@@ -290,7 +290,7 @@ export const UploadPage = () => {
                       <SelectTrigger className="w-full bg-background border-2 border-primary/20 focus:border-primary rounded-2xl px-4 py-6 text-left shadow-sm">
                         <SelectValue placeholder="Select a category" />
                       </SelectTrigger>
-                      <SelectContent className="bg-background">
+                      <SelectContent className="bg-background max-h-[60vh] overflow-y-auto z-[100]" position="popper" sideOffset={8}>
                         {CATEGORIES.map((cat) => (
                           <SelectItem key={cat} value={cat}>
                             {cat}
