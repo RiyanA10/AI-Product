@@ -51,6 +51,7 @@ export const UploadPage = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
   const [suggestedCategory, setSuggestedCategory] = useState<string | null>(null);
+  const [useAICategorySuggestion, setUseAICategorySuggestion] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -83,6 +84,8 @@ export const UploadPage = () => {
   };
 
   const suggestCategoryFromAI = async (productName: string) => {
+    if (!useAICategorySuggestion) return; // Skip if toggle is off
+    
     try {
       setIsSuggestingCategory(true);
       const { data, error } = await supabase.functions.invoke('suggest-category', {
@@ -348,6 +351,21 @@ export const UploadPage = () => {
                   
                   {currentStep === 'category' ? (
                     <div className="space-y-3">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={useAICategorySuggestion}
+                          onChange={(e) => {
+                            setUseAICategorySuggestion(e.target.checked);
+                            if (e.target.checked && formData.product_name) {
+                              suggestCategoryFromAI(formData.product_name);
+                            }
+                          }}
+                          className="w-4 h-4 rounded"
+                        />
+                        <Sparkles className="w-4 h-4 text-primary" />
+                        <span className="text-muted-foreground">Auto-suggest with AI</span>
+                      </label>
                       {suggestedCategory && (
                         <div className="flex items-center gap-2 text-sm bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
                           <Sparkles className="w-4 h-4 text-primary" />
