@@ -7,3 +7,5 @@ project_id = "vysewjocqjndkagngeum"
 [functions.debug-zenrows]
 
 [functions.admin]
+
+[functions.suggest-category]
