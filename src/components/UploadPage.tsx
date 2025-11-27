@@ -10,20 +10,20 @@ import { useNavigate } from 'react-router-dom';
 import { User } from '@supabase/supabase-js';
 
 const CATEGORIES = [
-  'Electronics',
+  'Electronics & Technology',
   'Fashion & Apparel',
-  'Home & Garden',
-  'Beauty & Personal Care',
+  'Luxury Goods',
+  'Food & Beverages',
+  'Health & Beauty',
+  'Home & Furniture',
   'Sports & Outdoors',
   'Toys & Games',
   'Books & Media',
-  'Automotive',
-  'Grocery & Food',
-  'Health & Wellness',
+  'Automotive Parts',
+  'Pharmaceuticals',
+  'Groceries (Staples)',
   'Office Supplies',
-  'Pet Supplies',
-  'Jewelry & Watches',
-  'Industrial & Scientific',
+  'Pet Supplies'
 ];
 
 type Step = 'product_name' | 'category' | 'current_price' | 'current_quantity' | 'cost_per_unit' | 'currency';
