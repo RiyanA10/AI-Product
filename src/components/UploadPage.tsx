@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Check, LogOut, Loader2 } from 'lucide-react';
+import { Check, LogOut, Loader2, Edit2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -49,6 +49,8 @@ export const UploadPage = () => {
   });
   const [completedSteps, setCompletedSteps] = useState<Set<Step>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSuggestingCategory, setIsSuggestingCategory] = useState(false);
+  const [suggestedCategory, setSuggestedCategory] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -80,7 +82,34 @@ export const UploadPage = () => {
     return labels[step];
   };
 
-  const handleNext = () => {
+  const suggestCategoryFromAI = async (productName: string) => {
+    try {
+      setIsSuggestingCategory(true);
+      const { data, error } = await supabase.functions.invoke('suggest-category', {
+        body: { product_name: productName }
+      });
+
+      if (error) throw error;
+
+      if (data?.suggested_category) {
+        setSuggestedCategory(data.suggested_category);
+        setFormData(prev => ({ ...prev, category: data.suggested_category }));
+        toast({
+          title: '✨ Category suggested',
+          description: `AI suggests: ${data.suggested_category}`,
+        });
+      } else {
+        setSuggestedCategory(null);
+      }
+    } catch (error) {
+      console.error('Error suggesting category:', error);
+      setSuggestedCategory(null);
+    } finally {
+      setIsSuggestingCategory(false);
+    }
+  };
+
+  const handleNext = async () => {
     const currentIndex = steps.indexOf(currentStep);
     
     // Validate current step
@@ -108,15 +137,35 @@ export const UploadPage = () => {
     // Mark current step as completed
     setCompletedSteps(prev => new Set([...prev, currentStep]));
 
-    // Move to next step or submit
+    // Move to next step
     if (currentIndex < steps.length - 1) {
-      setCurrentStep(steps[currentIndex + 1]);
+      const nextStep = steps[currentIndex + 1];
+      setCurrentStep(nextStep);
+      
+      // Auto-suggest category when moving from product_name to category
+      if (nextStep === 'category' && formData.product_name.trim()) {
+        await suggestCategoryFromAI(formData.product_name.trim());
+      }
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleEdit = (step: Step) => {
+    // Remove this step and all subsequent steps from completed
+    const stepIndex = steps.indexOf(step);
+    const newCompleted = new Set<Step>();
+    steps.forEach((s, idx) => {
+      if (idx < stepIndex) {
+        newCompleted.add(s);
+      }
+    });
+    setCompletedSteps(newCompleted);
+    setCurrentStep(step);
+    setSuggestedCategory(null);
+  };
+
+  const handleKeyPress = async (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
-      handleNext();
+      await handleNext();
     }
   };
 
@@ -242,7 +291,7 @@ export const UploadPage = () => {
             return (
               <div
                 key={step}
-                className="animate-slide-up"
+                className="animate-slide-up group"
                 style={{ animationDelay: `${index * 100}ms` }}
               >
                 <div className="flex items-start gap-3">
@@ -251,17 +300,27 @@ export const UploadPage = () => {
                   </div>
                   <div className="flex-1">
                     <p className="text-sm text-muted-foreground mb-2">{getStepLabel(step)}</p>
-                    <div className="bg-card border border-border rounded-2xl rounded-tl-none px-4 py-3 shadow-sm">
-                      <p className="font-medium text-foreground">
-                        {step === 'currency' 
-                          ? formData[step]
-                          : step === 'category'
-                          ? formData[step]
-                          : step === 'product_name'
-                          ? formData[step]
-                          : `${formData[step]} ${step === 'current_price' || step === 'cost_per_unit' ? formData.currency : 'units'}`
-                        }
-                      </p>
+                    <div className="relative">
+                      <div className="bg-card border border-border rounded-2xl rounded-tl-none px-4 py-3 shadow-sm">
+                        <p className="font-medium text-foreground">
+                          {step === 'currency' 
+                            ? formData[step]
+                            : step === 'category'
+                            ? formData[step]
+                            : step === 'product_name'
+                            ? formData[step]
+                            : `${formData[step]} ${step === 'current_price' || step === 'cost_per_unit' ? formData.currency : 'units'}`
+                          }
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => handleEdit(step)}
+                        variant="ghost"
+                        size="sm"
+                        className="absolute -right-2 -top-2 opacity-0 group-hover:opacity-100 transition-opacity bg-background border border-border shadow-sm hover:bg-accent"
+                      >
+                        <Edit2 className="w-3 h-3" />
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -277,27 +336,45 @@ export const UploadPage = () => {
                   <span className="w-2 h-2 rounded-full bg-primary-foreground" />
                 </div>
                 <div className="flex-1">
-                  <p className="text-sm text-muted-foreground mb-3">{getStepLabel(currentStep)}</p>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {getStepLabel(currentStep)}
+                    {currentStep === 'category' && isSuggestingCategory && (
+                      <span className="ml-2 inline-flex items-center gap-1 text-primary">
+                        <Sparkles className="w-3 h-3 animate-pulse" />
+                        AI is thinking...
+                      </span>
+                    )}
+                  </p>
                   
                   {currentStep === 'category' ? (
-                    <Select
-                      value={formData.category}
-                      onValueChange={(value) => {
-                        setFormData({ ...formData, category: value });
-                        setTimeout(() => handleNext(), 100);
-                      }}
-                    >
-                      <SelectTrigger className="w-full bg-background border-2 border-primary/20 focus:border-primary rounded-2xl px-4 py-6 text-left shadow-sm">
-                        <SelectValue placeholder="Select a category" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-background max-h-[60vh] overflow-y-auto z-[100]" position="popper" sideOffset={8}>
-                        {CATEGORIES.map((cat) => (
-                          <SelectItem key={cat} value={cat}>
-                            {cat}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div className="space-y-3">
+                      {suggestedCategory && (
+                        <div className="flex items-center gap-2 text-sm bg-primary/5 border border-primary/20 rounded-xl px-3 py-2">
+                          <Sparkles className="w-4 h-4 text-primary" />
+                          <span className="text-muted-foreground">AI suggested:</span>
+                          <span className="font-medium text-primary">{suggestedCategory}</span>
+                        </div>
+                      )}
+                      <Select
+                        value={formData.category}
+                        onValueChange={(value) => {
+                          setFormData({ ...formData, category: value });
+                          setTimeout(() => handleNext(), 100);
+                        }}
+                        disabled={isSuggestingCategory}
+                      >
+                        <SelectTrigger className="w-full bg-background border-2 border-primary/20 focus:border-primary rounded-2xl px-4 py-6 text-left shadow-sm">
+                          <SelectValue placeholder={isSuggestingCategory ? "AI is analyzing..." : "Select a category"} />
+                        </SelectTrigger>
+                        <SelectContent className="bg-background max-h-[60vh] overflow-y-auto z-[100]" position="popper" sideOffset={8}>
+                          {CATEGORIES.map((cat) => (
+                            <SelectItem key={cat} value={cat}>
+                              {cat}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   ) : currentStep === 'currency' ? (
                     <div className="flex gap-3">
                       <Button
