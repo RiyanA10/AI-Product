@@ -644,6 +644,11 @@ async function scrapeMarketplacePrices(
       sbUrl.searchParams.set('premium_proxy', 'true');
       sbUrl.searchParams.set('wait_browser', 'load');
       
+      // ✅ FIX: Add custom_google parameter for Google Shopping
+      if (config.name === 'Google Shopping') {
+        sbUrl.searchParams.set('custom_google', 'true');
+      }
+      
       const response = await fetch(sbUrl.toString());
       
       if (response.status === 500) {

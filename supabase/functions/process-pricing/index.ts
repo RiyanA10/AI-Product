@@ -156,13 +156,14 @@ async function fetchInflationRate(currency: string): Promise<{ rate: number; sou
 
 /**
  * Validate market data quality before using it
- * Returns: { isValid: boolean, reason: string, shouldProceed: boolean }
+ * Returns: { isValid: boolean, reason: string, shouldProceed: boolean, warning?: string }
  */
 function validateMarketData(
   marketStats: { lowest: number; average: number; highest: number },
   baselinePrice: number,
-  productCount: number
-): { isValid: boolean; reason: string; shouldProceed: boolean } {
+  productCount: number,
+  category: string
+): { isValid: boolean; reason: string; shouldProceed: boolean; warning?: string } {
   
   // Check 1: Minimum data points
   if (productCount < 3) {
@@ -185,20 +186,32 @@ function validateMarketData(
     };
   }
   
-  // Check 3: Lowest price sanity check
+  // Check 3: Lowest price sanity check with category awareness
+  // Size-variable products (perfumes, cosmetics, food) allow wider price ranges
+  const sizeVariableCategories = ['Health & Beauty', 'Food & Beverages', 'Groceries (Staples)'];
+  const isSizeVariable = sizeVariableCategories.includes(category);
+  const lowestThreshold = isSizeVariable ? 0.10 : 0.15; // 10% for size-variable, 15% for others
+  
   const lowestRatio = marketStats.lowest / baselinePrice;
-  if (lowestRatio < 0.2) {
-    // Lowest competitor is < 20% of baseline = likely wrong product
+  if (lowestRatio < lowestThreshold) {
+    // Instead of blocking completely, issue a warning but proceed
+    const warning = `Market includes low-priced variants (${marketStats.lowest.toFixed(0)}). These may be different sizes or bundles. Using weighted average for accuracy.`;
+    console.log(`⚠️ ${warning}`);
+    
     return {
-      isValid: false,
-      reason: `Market lowest price (${marketStats.lowest.toFixed(0)}) is suspiciously low compared to baseline (${baselinePrice.toFixed(0)}). Competitor data may include unrelated products.`,
-      shouldProceed: false
+      isValid: true,
+      reason: 'Proceeding with outlier-filtered market data',
+      shouldProceed: true,
+      warning
     };
   }
   
-  // Check 4: Average price reasonableness
+  // Check 4: Average price reasonableness - relaxed for size-variable products
   const avgRatio = marketStats.average / baselinePrice;
-  if (avgRatio < 0.3 || avgRatio > 3.0) {
+  const avgLowerBound = isSizeVariable ? 0.2 : 0.3;
+  const avgUpperBound = isSizeVariable ? 4.0 : 3.0;
+  
+  if (avgRatio < avgLowerBound || avgRatio > avgUpperBound) {
     return {
       isValid: false,
       reason: `Market average (${marketStats.average.toFixed(0)}) differs too much from baseline (${baselinePrice.toFixed(0)}). Data quality issues detected.`,
@@ -467,10 +480,14 @@ async function calculateOptimalPrice(
   const validation = validateMarketData(
     marketStats,
     baseline.current_price,
-    competitorProducts?.length || 0
+    competitorProducts?.length || 0,
+    baseline.category
   );
   
   console.log(`✓ Market validation: ${validation.reason}`);
+  if (validation.warning) {
+    console.log(`⚠️ Validation warning: ${validation.warning}`);
+  }
   
   if (!validation.shouldProceed) {
     console.log('⚠️ Market data validation failed, returning baseline price');
