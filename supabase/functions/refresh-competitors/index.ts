@@ -100,13 +100,16 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     searchUrl: 'https://www.noon.com/saudi-en/search?q=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 5000,              // ✅ Increased for Noon
-      blockResources: false,   // ✅ Don't block for Noon (prevents timeout)
+      wait: 5000,
+      blockResources: false,
       blockAds: true,
       countryCode: 'sa'
     },
     selectors: {
       containers: [
+        'div[data-component="ProductBox"]',
+        'div[data-qa-id="grid-view-item"]',
+        'article[data-component]',
         '[data-qa="product-tile"]',
         'div.productContainer',
         'article[data-qa="product-tile"]',
@@ -119,6 +122,8 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         '[data-qa="product-name"]',
         'div[class*="productTitle"]',
         'h3[class*="productTitle"]',
+        'h2[class*="title"]',
+        'span[data-qa="product-name"]',
         '[class*="title"]',
         '.productContainer h2'
       ],
@@ -145,6 +150,10 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     },
     selectors: {
       containers: [
+        'div[data-product-code]',
+        'div.product-listing__item',
+        'div[class*="product-list-item"]',
+        'article.product-item',
         'div[data-testid="plp-prod-item"]',
         '.product-grid-item',
         'div[class*="ProductCard"]',
@@ -157,6 +166,9 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         'div.product-card'
       ],
       productName: [
+        'a[data-testid="product-name"]',
+        'div[class*="product-name"] a',
+        '.product-listing__title',
         '[data-testid="product-title"]',
         'a[class*="product-title"]',
         'h3[class*="ProductTitle"]',
@@ -169,6 +181,9 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         '.product-name'
       ],
       price: [
+        'span[data-testid="product-price"]',
+        '.product-listing__price span',
+        'span[class*="price--current"]',
         '[data-testid="product-price"]',
         'span[class*="Price"]',
         '.product-price',
@@ -185,7 +200,7 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
   },
   'jarir': {
     name: 'Jarir',
-    searchUrl: 'https://www.jarir.com/search/?q=',
+    searchUrl: 'https://www.jarir.com/sa-en/catalogsearch/result/?q=',
     scrapingBeeOptions: {
       renderJs: true,
       wait: 6000,
@@ -195,8 +210,11 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     },
     selectors: {
       containers: [
-        'div.product-item',
+        'div.product-item-info',
         'li.product-item',
+        'div.products-grid .item',
+        'ol.products.list .item',
+        'div.product-item',
         'div[class*="product"]',
         'div.item',
         'article[class*="product"]',
@@ -204,6 +222,8 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
       ],
       productName: [
         'a.product-item-link',
+        '.product.name a',
+        'span.product-item-link',
         'h2.product-name a',
         'a[class*="product-name"]',
         'div.product-name',
@@ -211,6 +231,10 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         '.product-title'
       ],
       price: [
+        '[data-price-type="finalPrice"] .price',
+        'span[data-price-amount]',
+        '.price-wrapper .price',
+        '.price-final_price .price',
         'span.price',
         'span[class*="price-value"]',
         'div.price-box span.price',
@@ -749,10 +773,10 @@ async function scrapeGoogleSERP(
   console.log(`   Query: "${productName} price"`);
   
   try {
-    // Use ScrapingBee's SERP API endpoint
-    const sbUrl = new URL('https://app.scrapingbee.com/api/v1/');
+    // Use ScrapingBee's Google SERP API endpoint
+    const sbUrl = new URL('https://app.scrapingbee.com/api/v1/google');
     sbUrl.searchParams.set('api_key', scrapingbeeApiKey);
-    sbUrl.searchParams.set('search', productName + ' price');
+    sbUrl.searchParams.set('search', `${productName} price`);
     sbUrl.searchParams.set('language', 'en');
     sbUrl.searchParams.set('country_code', currency === 'SAR' ? 'sa' : 'us');
     sbUrl.searchParams.set('add_html', 'true');
