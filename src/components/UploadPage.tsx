@@ -374,6 +374,15 @@ export const UploadPage = () => {
                     />
                   )}
                   
+                  {currentStep === 'product_name' && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 ml-1 flex items-center gap-1">
+                      <span>💡</span>
+                      <span>
+                        <strong>Tip:</strong> Be specific! Include brand, model, storage/size (e.g., "iPhone 17 Pro Max 256GB" not just "iPhone")
+                      </span>
+                    </p>
+                  )}
+                  
                   {currentStep !== 'category' && currentStep !== 'currency' && (
                     <p className="text-xs text-muted-foreground mt-2 ml-1">Press Enter to continue</p>
                   )}

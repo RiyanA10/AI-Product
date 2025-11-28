@@ -425,8 +425,8 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
             </CardContent>
           </Card>
 
-          {/* Warning if profit decreases */}
-          {!isProfitIncrease && (
+          {/* Warning if profit decreases AND price actually changes */}
+          {!isProfitIncrease && priceChange !== 0 && (
             <Alert variant="destructive" className="mt-6">
               <AlertDescription>
                 <strong>⚠️ Warning:</strong> The suggested price would <strong>reduce your monthly profit by {formatPrice(Math.abs(profitChange), baseline.currency)} ({Math.abs(results.profit_increase_percent).toFixed(1)}%)</strong>.
@@ -438,8 +438,19 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
             </Alert>
           )}
           
-          {/* Other warnings */}
-          {results.has_warning && (
+          {/* Price Maintained Warning - when suggested = current */}
+          {results.has_warning && results.suggested_price === baseline.current_price && (
+            <Alert className="bg-amber-50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-700 mt-6">
+              <AlertDescription className="text-amber-800 dark:text-amber-200">
+                <strong>💡 Price Maintained:</strong> Market prices (avg: {formatPrice(results.market_average || 0, baseline.currency)}) are below your current price. We're keeping your price at {formatPrice(baseline.current_price, baseline.currency)} to protect your profit margins.
+                <br /><br />
+                <strong>If you matched market:</strong> Lowering to market average would reduce profit by approximately {results.market_average ? ((baseline.current_price - results.market_average) / baseline.current_price * 100).toFixed(1) : '0'}%.
+              </AlertDescription>
+            </Alert>
+          )}
+          
+          {/* Other warnings (not price maintained) */}
+          {results.has_warning && results.suggested_price !== baseline.current_price && (
             <Alert className="bg-warning/10 border-warning mt-6">
               <AlertDescription className="text-warning-foreground">
                 <strong>⚠️ Note:</strong> {results.warning_message}
