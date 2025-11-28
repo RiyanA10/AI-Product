@@ -289,8 +289,8 @@ function calculateWeightedMarketStats(
     };
   }
   
-  // 🆕 FILTER BY SIMILARITY - Only use products with similarity > 0.6 (60%)
-  const filteredProducts = products.filter(p => p.similarity_score > 0.6);
+  // ✅ FIX 6: Increase similarity threshold to 0.8 (80%)
+  const filteredProducts = products.filter(p => p.similarity_score >= 0.8);
   
   console.log(`🔍 Similarity filtering: ${products.length} → ${filteredProducts.length} products (removed ${products.length - filteredProducts.length} low-similarity matches)`);
   
