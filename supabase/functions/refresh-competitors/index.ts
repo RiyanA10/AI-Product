@@ -1331,10 +1331,13 @@ serve(async (req) => {
 
     const results = [];
     const lowConfidenceProducts: string[] = [];
-    const failedMarketplaces: string[] = [];  // Track marketplaces that failed to find products
+    const failedMarketplaces: string[] = [];
     let foundValidProducts = false;
 
-    for (const marketplaceKey of marketplaceKeys) {
+    // ✅ FIX 1: PARALLELIZE MARKETPLACE SCRAPING
+    console.log(`\n🚀 Starting parallel scraping of ${marketplaceKeys.length} marketplaces...`);
+    
+    const scrapePromises = marketplaceKeys.map(async (marketplaceKey) => {
       try {
         const config = MARKETPLACE_CONFIGS[marketplaceKey];
         console.log(`\n=== Scraping ${config.name} ===`);
@@ -1373,39 +1376,45 @@ serve(async (req) => {
           console.log(`🔍 Model filtering: ${beforeModelFilter} products → ${products.length} products (removed ${beforeModelFilter - products.length} wrong models)`);
         }
         
-        // ✅ FIX 5: AI Validation for medium-confidence matches (30-79%)
+        // ✅ FIX 4: BATCH AI VALIDATION - Run in parallel batches of 5
         if (products.length > 0) {
           const mediumConfidenceProducts = products.filter(p => p.similarity >= 0.30 && p.similarity < 0.80);
           
           if (mediumConfidenceProducts.length > 0) {
-            console.log(`\n🤖 Running AI validation on ${mediumConfidenceProducts.length} medium-confidence products...`);
+            console.log(`\n🤖 Running AI validation on ${mediumConfidenceProducts.length} medium-confidence products (batches of 5)...`);
             
-            for (const product of mediumConfidenceProducts) {
-              try {
-                const { data: validationResult, error: validationError } = await supabase.functions.invoke('validate-competitor', {
-                  body: {
-                    your_product_name: baseline.product_name,
-                    competitor_product_name: product.name,
-                    marketplace: marketplaceKey,
-                    baseline_price: baseline.current_price,
-                    competitor_price: product.price,
-                    similarity_score: product.similarity
+            // Process in batches of 5
+            for (let i = 0; i < mediumConfidenceProducts.length; i += 5) {
+              const batch = mediumConfidenceProducts.slice(i, i + 5);
+              
+              await Promise.all(batch.map(async (product) => {
+                try {
+                  const { data: validationResult, error: validationError } = await supabase.functions.invoke('validate-competitor', {
+                    body: {
+                      your_product_name: baseline.product_name,
+                      competitor_product_name: product.name,
+                      marketplace: marketplaceKey,
+                      baseline_price: baseline.current_price,
+                      competitor_price: product.price,
+                      similarity_score: product.similarity
+                    }
+                  });
+                  
+                  if (validationError) {
+                    console.log(`   ⚠️ AI validation error for "${product.name.slice(0, 50)}..."`);
+                    return;
                   }
-                });
-                
-                if (validationError) {
-                  console.log(`   ⚠️ AI validation error for "${product.name.slice(0, 50)}..."`);
-                  continue;
+                  
+                  // ✅ FIX 2: NORMALIZE AI DECISION (handle DIFFERENT, different_product, etc.)
+                  const decision = validationResult?.decision?.toLowerCase().replace(/_/g, '');
+                  if (decision === 'accessory' || decision === 'differentproduct' || decision === 'different') {
+                    console.log(`   🤖 AI filtered: "${product.name.slice(0, 50)}..." → ${validationResult.decision}`);
+                    product.similarity = -1; // Mark for removal
+                  }
+                } catch (e) {
+                  console.log(`   ⚠️ AI validation exception: ${e}`);
                 }
-                
-                if (validationResult?.decision === 'accessory' || validationResult?.decision === 'different_product') {
-                  console.log(`   🤖 AI filtered: "${product.name.slice(0, 50)}..." → ${validationResult.decision}`);
-                  // Mark for removal
-                  product.similarity = -1;
-                }
-              } catch (e) {
-                console.log(`   ⚠️ AI validation exception: ${e}`);
-              }
+              }));
             }
             
             // Remove AI-filtered products
@@ -1414,6 +1423,15 @@ serve(async (req) => {
             if (beforeAiFilter > products.length) {
               console.log(`🤖 AI filtering: ${beforeAiFilter} → ${products.length} products (removed ${beforeAiFilter - products.length})`);
             }
+          }
+        }
+        
+        // ✅ FIX 3: MINIMUM SIMILARITY THRESHOLD - Only save products >= 60%
+        if (products.length > 0) {
+          const beforeSimilarityFilter = products.length;
+          products = products.filter(p => p.similarity >= 0.60);
+          if (beforeSimilarityFilter > products.length) {
+            console.log(`🎯 Similarity filter: ${beforeSimilarityFilter} → ${products.length} products (removed ${beforeSimilarityFilter - products.length} below 60%)`);
           }
         }
         
@@ -1451,8 +1469,9 @@ serve(async (req) => {
             console.log(`✓ Inserted ${products.length} products into competitor_products`);
           }
           
-          // Calculate aggregates for backward compatibility
-          const prices = products.map(p => p.price);
+          // ✅ FIX 5: CONSISTENT AVERAGE - Only use high similarity products (>= 60%)
+          const highSimilarityProducts = products.filter(p => p.similarity >= 0.60);
+          const prices = highSimilarityProducts.map(p => p.price);
           const lowest = Math.min(...prices);
           const highest = Math.max(...prices);
           const average = prices.reduce((a, b) => a + b, 0) / prices.length;
@@ -1465,20 +1484,18 @@ serve(async (req) => {
             average_price: average,
             highest_price: highest,
             currency: baseline.currency,
-            products_found: products.length,
+            products_found: highSimilarityProducts.length,
             fetch_status: 'success'
           });
           
-          results.push({
+          return {
             marketplace: config.name,
             status: 'success',
-            products_found: products.length,
+            products_found: highSimilarityProducts.length,
             lowest,
             average,
             highest
-          });
-          
-          console.log(`✓ ${products.length} products: ${lowest.toFixed(2)}-${highest.toFixed(2)} ${baseline.currency}`);
+          };
         } else {
           // Track failed marketplace
           failedMarketplaces.push(marketplaceKey);
@@ -1491,16 +1508,11 @@ serve(async (req) => {
             fetch_status: 'no_data'
           });
           
-          results.push({
+          return {
             marketplace: config.name,
             status: 'no_data'
-          });
-          
-          console.log(`✗ No matching products - added to failed list`);
+          };
         }
-        
-        // Rate limit between marketplaces
-        await new Promise(resolve => setTimeout(resolve, 2000));
         
       } catch (error: any) {
         console.error(`Error with ${marketplaceKey}:`, error);
@@ -1513,13 +1525,32 @@ serve(async (req) => {
           fetch_status: 'failed'
         });
         
-        results.push({
+        return {
           marketplace: marketplaceKey,
           status: 'failed',
           error: error?.message || 'Unknown error'
-        });
+        };
+      }
+    });
+    
+    // Wait for all marketplaces to complete (in parallel)
+    const allResults = await Promise.allSettled(scrapePromises);
+    
+    // Process results
+    for (const result of allResults) {
+      if (result.status === 'fulfilled' && result.value) {
+        results.push(result.value);
+        if (result.value.status === 'success') {
+          console.log(`✓ ${result.value.marketplace}: ${result.value.products_found} products: ${result.value.lowest?.toFixed(2)}-${result.value.highest?.toFixed(2)} ${baseline.currency}`);
+        } else {
+          console.log(`✗ ${result.value.marketplace}: ${result.value.status}`);
+        }
+      } else if (result.status === 'rejected') {
+        console.error(`❌ Marketplace scraping rejected:`, result.reason);
       }
     }
+    
+    console.log(`\n✅ Parallel scraping complete: ${results.length} marketplaces processed`)
 
     // GOOGLE FALLBACK: Trigger if ANY marketplace failed OR no products found OR low confidence
     const shouldUseGoogleFallback = !foundValidProducts || failedMarketplaces.length > 0 || lowConfidenceProducts.length > 0;
@@ -1574,6 +1605,15 @@ serve(async (req) => {
           console.log(`🔍 Google model filtering: ${beforeModelFilter} → ${googleProducts.length} products`);
         }
         
+        // ✅ FIX 3: Apply 60% similarity threshold to Google products too
+        if (googleProducts.length > 0) {
+          const beforeSimilarityFilter = googleProducts.length;
+          googleProducts = googleProducts.filter(p => p.similarity >= 0.60);
+          if (beforeSimilarityFilter > googleProducts.length) {
+            console.log(`🎯 Google similarity filter: ${beforeSimilarityFilter} → ${googleProducts.length} products (removed ${beforeSimilarityFilter - googleProducts.length} below 60%)`);
+          }
+        }
+        
         if (googleProducts.length > 0) {
           const productRows = googleProducts.map((product, index) => ({
             baseline_id,
@@ -1590,7 +1630,9 @@ serve(async (req) => {
           
           await supabase.from('competitor_products').insert(productRows);
           
-          const prices = googleProducts.map(p => p.price);
+          // ✅ FIX 5: Only use high similarity products for average
+          const highSimilarityProducts = googleProducts.filter(p => p.similarity >= 0.60);
+          const prices = highSimilarityProducts.map(p => p.price);
           await supabase.from('competitor_prices').insert({
             baseline_id,
             merchant_id: baseline.merchant_id,
@@ -1599,14 +1641,14 @@ serve(async (req) => {
             average_price: prices.reduce((a, b) => a + b, 0) / prices.length,
             highest_price: Math.max(...prices),
             currency: baseline.currency,
-            products_found: googleProducts.length,
+            products_found: highSimilarityProducts.length,
             fetch_status: 'success'
           });
           
           results.push({
             marketplace: 'Google Shopping (Fallback)',
             status: 'success',
-            products_found: googleProducts.length
+            products_found: highSimilarityProducts.length
           });
           
           console.log(`✓ Google fallback found ${googleProducts.length} products`);

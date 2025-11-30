@@ -120,9 +120,11 @@ Marketplace: ${marketplace}
 SIMILARITY SCORE: ${(similarity_score * 100).toFixed(0)}%
 
 RULES:
-1. MATCH - Same product model/brand (e.g., "iPhone 14 Pro" vs "Apple iPhone 14 Pro Max" = MATCH)
-2. ACCESSORY - Related accessory or replacement part (e.g., "iPhone 14" vs "iPhone 14 Case" = ACCESSORY)
-3. DIFFERENT - Completely different product (e.g., "iPhone 14" vs "Samsung Galaxy S23" = DIFFERENT)
+1. match - Same product model/brand (e.g., "iPhone 14 Pro" vs "Apple iPhone 14 Pro Max" = match)
+2. accessory - Related accessory or replacement part (e.g., "iPhone 14" vs "iPhone 14 Case" = accessory)
+3. different_product - Completely different product (e.g., "iPhone 14" vs "Samsung Galaxy S23" = different_product)
+
+CRITICAL: Always use lowercase for decision values. Never use DIFFERENT, MATCH, ACCESSORY - use lowercase with underscore.
 
 Consider:
 - Brand names (Apple vs Samsung)
