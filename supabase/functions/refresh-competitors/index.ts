@@ -10,6 +10,11 @@ const corsHeaders = {
 };
 
 // ========================================
+// TIMEOUT CONFIGURATION
+// ========================================
+const MARKETPLACE_TIMEOUT = 25000; // 25 seconds per marketplace (reduced from 40s)
+
+// ========================================
 // SMART QUERY CONSTRUCTION (NOISE FILTERING)
 // ========================================
 
@@ -63,6 +68,65 @@ function buildSearchQuery(productName: string, isRefurbished: boolean = false): 
   return smartQuery;
 }
 
+/**
+ * FIX 2: Simplify product title for direct marketplace searches
+ * Extracts Brand + Model + Storage only
+ * "Samsung Galaxy S24 Ultra, AI Phone, 256GB, Titanium Black" → "Samsung Galaxy S24 Ultra 256GB"
+ */
+function simplifyTitle(fullName: string): string {
+  // Noise patterns to remove
+  const noisePatterns = [
+    /,\s*/g,                           // Remove commas
+    /\bAI Phone\b/gi,                  // AI marketing terms
+    /\b(Titanium|Black|White|Blue|Green|Purple|Pink|Gold|Silver|Gray|Grey)\b/gi, // Colors
+    /\b(Unlocked|Factory Sealed|New|Sealed|Brand New)\b/gi, // Condition
+    /\b(Free Shipping|Fast Delivery|Same Day)\b/gi, // Shipping
+    /\b(International|US|EU|UK|KSA)\s*(Version|Variant)?\b/gi, // Region
+    /\([^)]*\)/g,                      // Remove parenthetical content
+    /\[[^\]]*\]/g,                     // Remove bracketed content
+  ];
+  
+  let cleaned = fullName;
+  for (const pattern of noisePatterns) {
+    cleaned = cleaned.replace(pattern, ' ');
+  }
+  
+  // Keep Brand + Model + Storage (first 6 meaningful words)
+  const simplified = cleaned
+    .split(/\s+/)
+    .filter(word => word.length > 1)
+    .slice(0, 6)
+    .join(' ')
+    .trim();
+  
+  console.log(`🔧 Simplified title: "${fullName.slice(0, 50)}..." → "${simplified}"`);
+  return simplified;
+}
+
+// ========================================
+// FLOOR RULE VALIDATION (FIX 4)
+// ========================================
+
+/**
+ * Validate if a scraped price is reasonable
+ * Rejects suspiciously low prices (likely extraction errors)
+ */
+function isValidPrice(scrapedPrice: number, baselinePrice: number, costPrice?: number): boolean {
+  // Floor Rule: Price cannot be less than 50% of cost (if cost is available)
+  if (costPrice && costPrice > 0 && scrapedPrice < costPrice * 0.5) {
+    console.log(`   ⏭️ Floor Rule: ${scrapedPrice} < ${(costPrice * 0.5).toFixed(0)} (50% of cost ${costPrice})`);
+    return false;
+  }
+  
+  // Sanity: Price cannot be less than 10% of baseline (likely extraction error like "256")
+  if (scrapedPrice < baselinePrice * 0.10) {
+    console.log(`   ⏭️ Sanity: ${scrapedPrice} < ${(baselinePrice * 0.10).toFixed(0)} (10% of baseline ${baselinePrice})`);
+    return false;
+  }
+  
+  return true;
+}
+
 // ========================================
 // MARKETPLACE CONFIGURATIONS
 // ========================================
@@ -82,6 +146,10 @@ interface MarketplaceConfig {
     productName: string[];
     price: string[];
   };
+  // FIX 3: Price-based wait_for selectors per marketplace
+  waitForSelector?: string;
+  // FIX 3: Enable stealth proxy for sites that block scrapers
+  useStealthProxy?: boolean;
 }
 
 const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
@@ -90,7 +158,7 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     searchUrl: 'https://www.google.com/search?tbm=shop&q=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 2500,  // Reduced from 3000
+      wait: 2500,
       blockResources: true,
       blockAds: true,
       countryCode: 'us'
@@ -121,7 +189,7 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     searchUrl: 'https://www.amazon.sa/s?k=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 6000,  // Restored original wait time
+      wait: 6000,
       blockResources: false,
       blockAds: true,
       countryCode: 'sa'
@@ -147,14 +215,16 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         'span[data-a-color="price"]',
         '.a-price-range .a-price .a-offscreen'
       ]
-    }
+    },
+    waitForSelector: '.a-price,.a-price-whole,span.a-offscreen',
+    useStealthProxy: false // Amazon usually works without stealth
   },
   'noon': {
     name: 'Noon',
     searchUrl: 'https://www.noon.com/saudi-en/search?q=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 7000,  // Restored original wait time
+      wait: 7000,
       blockResources: false,
       blockAds: true,
       countryCode: 'sa'
@@ -174,7 +244,6 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         '.grid > div[class*="product"]',
         'div[class*="ProductBox"]',
         'div[data-qa="product-item"]',
-        // More generic fallbacks
         'a[href*="/product/"]',
         'div:has(a[href*="/product/"]):has([class*="price"])',
         'article'
@@ -189,7 +258,6 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         'span[data-qa="product-name"]',
         '[class*="title"]',
         '.productContainer h2',
-        // Generic fallbacks
         'a[href*="/product/"] span',
         'div > a:first-child',
         'h2', 'h3', 'h4',
@@ -204,19 +272,21 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         'div[class*="price"] strong',
         'span[class*="price"]',
         '[class*="priceNow"]',
-        // Generic fallbacks
         '[class*="price"] span:first-child',
         'strong',
         '.sellingPrice'
       ]
-    }
+    },
+    // FIX 3: Wait for PRICE elements, not just containers
+    waitForSelector: '[data-qa="product-price"],.priceNow,[class*="price"],[class*="Price"]',
+    useStealthProxy: true // Saudi site - enable stealth
   },
   'extra': {
     name: 'Extra',
     searchUrl: 'https://www.extra.com/en-sa/search?q=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 8000,  // Restored original wait time
+      wait: 8000,
       blockResources: false,
       blockAds: true,
       countryCode: 'sa'
@@ -241,7 +311,6 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         'li[class*="product"]',
         'div.product-item',
         'div.product-card',
-        // Generic fallbacks
         'a[href*="/product/"]',
         'div:has(a[href]):has([class*="price"])'
       ],
@@ -260,7 +329,6 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         'h3 a',
         '.product-title',
         '.product-name',
-        // Generic fallbacks
         'a[href*="/product/"]',
         'h2 a', 'h3 a',
         '[class*="title"] a',
@@ -282,61 +350,55 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         '.price',
         '.special-price',
         '.final-price',
-        // Generic fallbacks
         '[class*="price"]:not([class*="was"])',
         'strong'
       ]
-    }
+    },
+    // FIX 3: Wait for PRICE elements
+    waitForSelector: '.product-price,.price-box,[class*="Price"],[data-qa="product-price"]',
+    useStealthProxy: true // Saudi site - enable stealth
   },
   'jarir': {
     name: 'Jarir',
     searchUrl: 'https://www.jarir.com/sa-en/catalogsearch/result/?q=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 5000,  // Restored original wait time
+      wait: 5000,
       blockResources: false,
       blockAds: true,
       countryCode: 'sa'
     },
     selectors: {
       containers: [
-        // Primary - Magento-based selectors
         '.product-items .product-item',
         '.products.list .product-item',
         'li.product-item',
         'div.product-item-info',
-        // Fallback - generic
         'div.products-grid .item',
         'ol.products.list .item',
         'div[data-product-sku]',
         'article.product',
-        // Generic fallbacks
         'a[href*="/product/"]',
         'div:has(a[href]):has(.price)',
         'div[class*="product"]'
       ],
       productName: [
-        // Magento standard
         '.product-item-info .product-item-link',
         'a.product-item-link',
         '.product-item-name a',
         '.product.name a',
-        // Fallback
         'h2.product-name a',
         'span.product-item-link',
         'a[class*="product-name"]',
         '.product-title',
-        // Generic fallbacks
         'a[href*="/product/"]',
         'h2 a', 'h3 a'
       ],
       price: [
-        // Magento standard
         '.price-box .price',
         'span[data-price-amount]',
         '[data-price-type="finalPrice"] .price',
         '.price-wrapper .price',
-        // Fallback
         '.price-final_price .price',
         'span.price',
         'span[class*="price-value"]',
@@ -345,18 +407,20 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
         'span.special-price span.price',
         '.final-price',
         '.sale-price',
-        // Generic fallbacks
         '[class*="price"] span',
         'strong'
       ]
-    }
+    },
+    // FIX 3: Wait for Magento price elements
+    waitForSelector: '.price-box .price,span[data-price-amount],[data-price-type="finalPrice"]',
+    useStealthProxy: true // Saudi site - enable stealth
   },
   'amazon-us': {
     name: 'Amazon.com',
     searchUrl: 'https://www.amazon.com/s?k=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 3000,  // Reduced from 6000
+      wait: 3000,
       blockResources: false,
       blockAds: true,
       countryCode: 'us'
@@ -389,7 +453,7 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     searchUrl: 'https://www.walmart.com/search?q=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 3500,  // Reduced from 6000
+      wait: 3500,
       blockResources: false,
       blockAds: true,
       countryCode: 'us'
@@ -421,7 +485,7 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     searchUrl: 'https://www.ebay.com/sch/i.html?_nkw=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 3000,  // Reduced from 6000
+      wait: 3000,
       blockResources: false,
       blockAds: true,
       countryCode: 'us'
@@ -452,7 +516,7 @@ const MARKETPLACE_CONFIGS: Record<string, MarketplaceConfig> = {
     searchUrl: 'https://www.target.com/s?searchTerm=',
     scrapingBeeOptions: {
       renderJs: true,
-      wait: 3500,  // Reduced from 6000
+      wait: 3500,
       blockResources: false,
       blockAds: true,
       countryCode: 'us'
@@ -630,7 +694,6 @@ function extractPrice(text: string, expectedCurrency: string, productName?: stri
   text = text.replace(/from|as low as|starting at|save|off|each|per|month|\/mo/gi, '').trim();
   
   // FIX 1: Extract storage sizes from product name to exclude from price extraction
-  // e.g., "Samsung Galaxy S24 Ultra 256GB" → exclude "256" as a price candidate
   const storageSizesToExclude: Set<string> = new Set();
   const modelNumbersToExclude: Set<string> = new Set();
   
@@ -640,7 +703,6 @@ function extractPrice(text: string, expectedCurrency: string, productName?: stri
     let storageMatch;
     while ((storageMatch = storagePattern.exec(productName)) !== null) {
       storageSizesToExclude.add(storageMatch[1]);
-      console.log(`   🚫 Excluding storage size from prices: ${storageMatch[1]}`);
     }
     
     // Extract model numbers (e.g., "16" from "iPhone 16", "24" from "S24")
@@ -676,18 +738,17 @@ function extractPrice(text: string, expectedCurrency: string, productName?: stri
       const priceStr = match[1].replace(/,/g, '');
       const price = parseFloat(priceStr);
       
-      // FIX 1: Skip if this number is a storage size (256, 512, 128, 1024, etc.)
+      // Skip if this number is a storage size
       if (storageSizesToExclude.has(priceStr)) {
-        console.log(`   ⏭️ Skipping storage size as price: ${priceStr}`);
         continue;
       }
       
-      // FIX 1: Skip if this number is a model number
+      // Skip if this number is a model number
       if (modelNumbersToExclude.has(priceStr)) {
         continue;
       }
       
-      // Skip very small numbers that are likely not prices (model numbers, quantities)
+      // Skip very small numbers that are likely not prices
       if (price < 50) {
         continue;
       }
@@ -717,10 +778,6 @@ function extractPrice(text: string, expectedCurrency: string, productName?: stri
 
 /**
  * Extract core product identifier (brand + model only)
- * Examples:
- *   "Sony WH-1000XM6 The Best Wireless..." → "Sony WH-1000XM6"
- *   "Apple iPhone 15 Pro Max 256GB Blue" → "Apple iPhone 15 Pro"
- *   "Samsung Galaxy S24 Ultra Premium Edition" → "Samsung Galaxy S24 Ultra"
  */
 function extractCoreProductName(fullName: string): string {
   // Remove punctuation but keep spaces
@@ -733,7 +790,6 @@ function extractCoreProductName(fullName: string): string {
     'edition', 'version', 'original', 'authentic', 'genuine',
     'new', 'latest', 'upgraded', 'advanced', 'enhanced',
     'black', 'white', 'blue', 'red', 'silver', 'gold', 'gray', 'grey'
-    // ❌ NOT removing: headphones, phone, laptop, tv, speaker, etc.
   ];
   
   const words = cleaned
@@ -755,36 +811,20 @@ function extractCoreProductName(fullName: string): string {
 
 /**
  * Detect if a product is an accessory or replacement part
- * Context-aware: Used to prevent accessories from contaminating main product pricing
  */
 function isAccessoryOrReplacement(productName: string): boolean {
   const accessoryKeywords = [
-    // Replacement parts
     'replacement', 'replace', 'spare', 'parts',
-    
-    // Ear accessories
     'earpads', 'ear pads', 'ear pad', 'cushion', 'cushions', 'foam', 'tips',
-    
-    // Cases & covers
     'case', 'cover', 'protective', 'pouch', 'bag', 'hard case', 'soft case',
-    
-    // Cables & adapters
     'cable', 'cord', 'wire', 'adapter', 'charger', 'charging cable',
-    
-    // Screen protectors & films
     'screen protector', 'protector', 'tempered glass', 'glass film', 'film',
     'lens protector', 'camera protector', 'privacy screen',
     'screen guard', 'guard', 'shield',
-    
-    // Additional accessories
     'stand', 'mount', 'holder', 'strap', 'skin', 'sticker', 'decal',
-    
-    // Sets/pieces (not full product)
     'pcs', 'pieces', 'pair', 'set of', 'pack of', 
     '2 pack', '3 pack', '4 pack', '2-pack', '3-pack', '4-pack',
     '2pcs', '3pcs', '4pcs',
-    
-    // Arabic
     'قطع غيار', 'قطع', 'غيار', 'بديل', 'حافظة', 'كفر', 'غطاء', 'وسادة', 'كابل'
   ];
   
@@ -798,7 +838,6 @@ function isAccessoryOrReplacement(productName: string): boolean {
 
 /**
  * Extract model information from product name
- * Used to filter out wrong product versions (e.g., iPhone 13 vs iPhone 17)
  */
 function extractModelInfo(productName: string): { 
   brand: string; 
@@ -807,16 +846,16 @@ function extractModelInfo(productName: string): {
 } {
   const lowerName = productName.toLowerCase();
   
-  // ✅ FIX 1: iPhone Air detection FIRST (before regular iPhones)
+  // iPhone Air detection FIRST
   if (lowerName.includes('iphone air')) {
     return {
-      brand: 'iphone-air',  // Different brand identifier!
+      brand: 'iphone-air',
       model: 'air',
       version: null
     };
   }
   
-  // iPhone detection: "iPhone 17 Pro Max" → { brand: "iphone", model: "pro max", version: 17 }
+  // iPhone detection
   const iphoneMatch = lowerName.match(/iphone\s*(\d+)\s*(pro\s*max|pro|plus|mini)?/i);
   if (iphoneMatch) {
     return {
@@ -826,7 +865,7 @@ function extractModelInfo(productName: string): {
     };
   }
   
-  // Samsung Galaxy detection: "Galaxy S24 Ultra" → { brand: "galaxy", model: "s ultra", version: 24 }
+  // Samsung Galaxy detection
   const galaxyMatch = lowerName.match(/galaxy\s*([sza])(\d+)\s*(ultra|plus|fe)?/i);
   if (galaxyMatch) {
     return {
@@ -836,13 +875,11 @@ function extractModelInfo(productName: string): {
     };
   }
   
-  // Add more brands as needed...
-  
   return { brand: '', model: '', version: null };
 }
 
 /**
- * Extract storage size from product name (e.g., "256GB" -> 256)
+ * Extract storage size from product name
  */
 function extractStorageSize(productName: string): number | null {
   const storageMatch = productName.match(/(\d+)\s*(?:gb|GB|Gb)/i);
@@ -851,19 +888,16 @@ function extractStorageSize(productName: string): number | null {
 
 /**
  * Check if two products have mismatched model numbers
- * Returns TRUE if they are different models (should be filtered out)
- * FIX 3: Allow storage variants to match (256GB/512GB same model = OK)
  */
 function isModelMismatch(baselineProduct: string, competitorProduct: string): boolean {
   const baseline = extractModelInfo(baselineProduct);
   const competitor = extractModelInfo(competitorProduct);
   
-  // Check brand first (iPhone Air vs iPhone)
+  // Check brand first
   if (baseline.brand && competitor.brand && baseline.brand !== competitor.brand) {
-    return true; // Different brands (e.g., iphone-air vs iphone)
+    return true;
   }
   
-  // If only one has brand info, allow it (can't determine mismatch)
   if ((baseline.brand && !competitor.brand) || (!baseline.brand && competitor.brand)) {
     return false;
   }
@@ -873,21 +907,17 @@ function isModelMismatch(baselineProduct: string, competitorProduct: string): bo
     if (baseline.version !== null && competitor.version !== null) {
       const versionMatch = baseline.version === competitor.version;
       if (!versionMatch) {
-        return true; // MISMATCH: Different iPhone versions
+        return true;
       }
     }
     
-    // Model variant must ALSO match (Pro Max vs Pro)
     if (baseline.model && competitor.model) {
       const baselineModel = baseline.model.replace(/\s+/g, '');
       const competitorModel = competitor.model.replace(/\s+/g, '');
       if (baselineModel !== competitorModel) {
-        return true; // MISMATCH: Different model variants (promax vs pro)
+        return true;
       }
     }
-    
-    // FIX 3: Storage variants are ALLOWED - don't filter based on storage
-    // 256GB and 512GB of same model are comparable for pricing
   }
   
   // If both are Galaxy phones, version must match
@@ -895,25 +925,24 @@ function isModelMismatch(baselineProduct: string, competitorProduct: string): bo
     if (baseline.version !== null && competitor.version !== null) {
       const versionMatch = baseline.version === competitor.version;
       if (!versionMatch) {
-        return true; // MISMATCH: Different Galaxy versions
+        return true;
       }
     }
     
-    // Also check model variant for Galaxy
     if (baseline.model && competitor.model) {
       const baselineModel = baseline.model.replace(/\s+/g, '');
       const competitorModel = competitor.model.replace(/\s+/g, '');
       if (baselineModel !== competitorModel) {
-        return true; // MISMATCH: Different model variants
+        return true;
       }
     }
   }
   
-  return false; // No mismatch detected
+  return false;
 }
 
 // ========================================
-// SCRAPING FUNCTION
+// SCRAPING INTERFACES
 // ========================================
 
 interface ScrapedProduct {
@@ -922,37 +951,28 @@ interface ScrapedProduct {
   similarity: number;
   priceRatio: number;
   url?: string;
-  sourceStore?: string;  // FIX 2: Store name extracted from URL
+  sourceStore?: string;
+}
+
+interface ScrapeResult {
+  marketplace: string;
+  products: ScrapedProduct[];
+  status: 'success' | 'no_data' | 'timeout' | 'error';
+  elapsed: number;
+  error?: string;
 }
 
 // ========================================
-// FIX 2: EXTRACT STORE NAME FROM URL
+// NON-RETAILER FILTERING
 // ========================================
 
-// FIX 3: Non-retailer domains to exclude (specs sites, official brand sites, reviews)
 const NON_RETAILER_DOMAINS = [
-  'gsmarena.com',      // Specs/reviews site
-  'samsung.com',       // Official brand site (not marketplace)
-  'apple.com',         // Official brand site
-  'phonearena.com',    // Reviews
-  'techradar.com',     // Reviews
-  'cnet.com',          // Reviews
-  'youtube.com',       // Videos
-  'wikipedia.org',     // Info
-  'reddit.com',        // Forum
-  'twitter.com',       // Social
-  'facebook.com',      // Social
-  'instagram.com',     // Social
-  'tiktok.com',        // Social
-  'quora.com',         // Q&A
-  'alibaba.com',       // Wholesale (not retail)
-  'aliexpress.com',    // Ships from China (not local)
-  'made-in-china.com', // Wholesale
+  'gsmarena.com', 'samsung.com', 'apple.com', 'phonearena.com',
+  'techradar.com', 'cnet.com', 'youtube.com', 'wikipedia.org',
+  'reddit.com', 'twitter.com', 'facebook.com', 'instagram.com',
+  'tiktok.com', 'quora.com', 'alibaba.com', 'aliexpress.com', 'made-in-china.com'
 ];
 
-/**
- * Check if URL is from a non-retailer domain
- */
 function isNonRetailerDomain(url: string): boolean {
   if (!url) return false;
   try {
@@ -963,17 +983,13 @@ function isNonRetailerDomain(url: string): boolean {
   }
 }
 
-/**
- * Extract store/provider name from product URL
- * e.g., https://www.noon.com/product/123 → "Noon"
- */
 function extractStoreFromUrl(url: string): string {
   if (!url) return 'Unknown';
   
   try {
     const hostname = new URL(url).hostname.toLowerCase();
     
-    // Known store mappings - Saudi Arabia
+    // Saudi Arabia stores
     if (hostname.includes('noon.com')) return 'Noon';
     if (hostname.includes('extra.com')) return 'Extra';
     if (hostname.includes('jarir.com')) return 'Jarir';
@@ -994,7 +1010,7 @@ function extractStoreFromUrl(url: string): string {
     if (hostname.includes('homebox')) return 'Home Box';
     if (hostname.includes('ikea')) return 'IKEA';
     
-    // Known store mappings - International
+    // International stores
     if (hostname.includes('amazon.com')) return 'Amazon US';
     if (hostname.includes('walmart.com')) return 'Walmart';
     if (hostname.includes('ebay.com')) return 'eBay';
@@ -1005,10 +1021,8 @@ function extractStoreFromUrl(url: string): string {
     if (hostname.includes('costco')) return 'Costco';
     if (hostname.includes('aliexpress')) return 'AliExpress';
     
-    // Extract domain name as fallback (e.g., "example" from "www.example.com")
     const parts = hostname.replace('www.', '').split('.');
     if (parts.length > 0) {
-      // Capitalize first letter
       return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
     }
     
@@ -1018,7 +1032,10 @@ function extractStoreFromUrl(url: string): string {
   }
 }
 
-// ✅ FIX: Google SERP with stealth_proxy for reliable scraping
+// ========================================
+// GOOGLE SCRAPERS
+// ========================================
+
 async function scrapeGoogleSERP(
   productName: string,
   baselinePrice: number,
@@ -1036,14 +1053,13 @@ async function scrapeGoogleSERP(
   console.log(`   Query: "${productName} price"`);
   
   try {
-    // ✅ Use regular API with stealth_proxy to scrape Google search directly
     const googleSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(productName + ' price')}`;
     
     const sbUrl = new URL('https://app.scrapingbee.com/api/v1/');
     sbUrl.searchParams.set('api_key', scrapingbeeApiKey);
     sbUrl.searchParams.set('url', googleSearchUrl);
-    sbUrl.searchParams.set('custom_google', 'true');  // ← CRITICAL: Required by ScrapingBee for Google
-    sbUrl.searchParams.set('stealth_proxy', 'true');  // ← Critical for bypassing bot detection
+    sbUrl.searchParams.set('custom_google', 'true');
+    sbUrl.searchParams.set('stealth_proxy', 'true');
     sbUrl.searchParams.set('render_js', 'true');
     sbUrl.searchParams.set('wait', '3000');
     sbUrl.searchParams.set('country_code', currency === 'SAR' ? 'sa' : 'us');
@@ -1063,12 +1079,8 @@ async function scrapeGoogleSERP(
     const doc = parser.parseFromString(html, 'text/html');
     if (!doc) return [];
     
-    // Use Google organic search result selectors
     const containers = trySelectAll(doc, [
-      'div.tF2Cxc',      // Google search result container
-      'div.g',           // Classic search result
-      '[data-hveid]',    // Attribute-based selector
-      '.yuRUbf'          // URL/title container
+      'div.tF2Cxc', 'div.g', '[data-hveid]', '.yuRUbf'
     ]);
     
     if (containers.length === 0) {
@@ -1085,38 +1097,26 @@ async function scrapeGoogleSERP(
     for (let i = 0; i < Math.min(containers.length, 30); i++) {
       const container = containers[i];
       
-      // Extract title
-      const nameEl = trySelectOne(container, [
-        'h3',
-        '.LC20lb',
-        'div[role="heading"]'
-      ]);
+      const nameEl = trySelectOne(container, ['h3', '.LC20lb', 'div[role="heading"]']);
       if (!nameEl) continue;
       
       const name = nameEl.textContent?.trim();
       if (!name) continue;
       
-      // Extract snippet/description which might contain price
-      const snippetEl = trySelectOne(container, [
-        '.VwiC3b',
-        '.lEBKkf',
-        'div[data-content-feature="1"]',
-        'div.s'
-      ]);
-      
+      const snippetEl = trySelectOne(container, ['.VwiC3b', '.lEBKkf', 'div[data-content-feature="1"]', 'div.s']);
       const snippet = snippetEl?.textContent?.trim() || '';
       const combinedText = `${name} ${snippet}`;
       
-      // Try to extract price from combined text
-      // FIX 1: Pass product name to avoid model number extraction
       const extracted = extractPrice(combinedText, currency, baselineFullName);
       if (!extracted || extracted.price <= 0) continue;
+      
+      // FIX 4: Apply Floor Rule validation
+      if (!isValidPrice(extracted.price, baselinePrice)) continue;
       
       const normalizedCompetitor = normalizeProductName(name);
       const similarity = calculateSimilarity(normalizedBaseline, normalizedCompetitor);
       const priceRatio = extracted.price / baselinePrice;
       
-      // Extract URL and store name
       let productUrl: string | undefined;
       let sourceStore: string = 'Google Search';
       try {
@@ -1125,10 +1125,8 @@ async function scrapeGoogleSERP(
           const href = linkEl.getAttribute('href');
           if (href) {
             productUrl = href;
-            // FIX 2: Extract store name from URL
             sourceStore = extractStoreFromUrl(href);
             
-            // FIX 3: Skip non-retailer domains (GSMarena, Samsung.com, etc.)
             if (isNonRetailerDomain(href)) {
               console.log(`   ⏭️ Skipping non-retailer: ${sourceStore}`);
               continue;
@@ -1158,7 +1156,6 @@ async function scrapeGoogleSERP(
   }
 }
 
-// ✅ NEW: Dedicated Google Shopping scraper with stealth_proxy
 async function scrapeGoogleShopping(
   productName: string,
   baselinePrice: number,
@@ -1172,7 +1169,6 @@ async function scrapeGoogleShopping(
     return [];
   }
   
-  // ✅ Build smart query with negative keywords (self-aware)
   const isRefurbished = productName.toLowerCase().includes('refurbished') || productName.toLowerCase().includes('renewed');
   const smartQuery = buildSearchQuery(productName, isRefurbished);
   
@@ -1181,16 +1177,15 @@ async function scrapeGoogleShopping(
   console.log(`   Smart Query: "${smartQuery.slice(0, 100)}..."`);
   
   try {
-    // ✅ Use Google Shopping tab directly with stealth_proxy + smart query
     const shoppingUrl = `https://www.google.com/search?tbm=shop&q=${encodeURIComponent(smartQuery)}`;
     
     const sbUrl = new URL('https://app.scrapingbee.com/api/v1/');
     sbUrl.searchParams.set('api_key', scrapingbeeApiKey);
     sbUrl.searchParams.set('url', shoppingUrl);
-    sbUrl.searchParams.set('custom_google', 'true');  // ← CRITICAL: Required by ScrapingBee for Google
-    sbUrl.searchParams.set('stealth_proxy', 'true');  // ← Critical!
+    sbUrl.searchParams.set('custom_google', 'true');
+    sbUrl.searchParams.set('stealth_proxy', 'true');
     sbUrl.searchParams.set('render_js', 'true');
-    sbUrl.searchParams.set('wait', '5000');  // Shopping needs more time
+    sbUrl.searchParams.set('wait', '5000');
     sbUrl.searchParams.set('country_code', currency === 'SAR' ? 'sa' : 'us');
     
     const response = await fetch(sbUrl.toString());
@@ -1208,13 +1203,8 @@ async function scrapeGoogleShopping(
     const doc = parser.parseFromString(html, 'text/html');
     if (!doc) return [];
     
-    // Google Shopping product selectors
     const containers = trySelectAll(doc, [
-      'div[data-sh-pr]',         // Shopping product container
-      '.sh-dgr__content',        // Grid result
-      '[data-docid]',            // Document ID
-      '.sh-dlr__list-result',    // List result
-      'div.sh-dgr__grid-result'  // Grid result alternative
+      'div[data-sh-pr]', '.sh-dgr__content', '[data-docid]', '.sh-dlr__list-result', 'div.sh-dgr__grid-result'
     ]);
     
     if (containers.length === 0) {
@@ -1231,35 +1221,23 @@ async function scrapeGoogleShopping(
     for (let i = 0; i < Math.min(containers.length, 30); i++) {
       const container = containers[i];
       
-      const nameEl = trySelectOne(container, [
-        'h3',
-        'h4',
-        '.sh-np__product-title',
-        'div[role="heading"]',
-        '[data-sh-pr] h3',
-        '[data-sh-pr] h4'
-      ]);
+      const nameEl = trySelectOne(container, ['h3', 'h4', '.sh-np__product-title', 'div[role="heading"]', '[data-sh-pr] h3', '[data-sh-pr] h4']);
       if (!nameEl) continue;
       
       const name = nameEl.textContent?.trim();
       if (!name) continue;
       
-      const priceEl = trySelectOne(container, [
-        '.a8Pemb',
-        'span[aria-label*="$"]',
-        'span[aria-label*="SAR"]',
-        'span[aria-label*="price"]',
-        '[data-sh-pr] span.a8Pemb',
-        'b'
-      ]);
+      const priceEl = trySelectOne(container, ['.a8Pemb', 'span[aria-label*="$"]', 'span[aria-label*="SAR"]', 'span[aria-label*="price"]', '[data-sh-pr] span.a8Pemb', 'b']);
       if (!priceEl) continue;
       
       const priceText = priceEl.textContent?.trim();
       if (!priceText) continue;
       
-      // FIX 1: Pass product name to extractPrice to avoid model number extraction
       const extracted = extractPrice(priceText, currency, baselineFullName);
       if (!extracted || extracted.price <= 0) continue;
+      
+      // FIX 4: Apply Floor Rule validation
+      if (!isValidPrice(extracted.price, baselinePrice)) continue;
       
       const normalizedCompetitor = normalizeProductName(name);
       const similarity = calculateSimilarity(normalizedBaseline, normalizedCompetitor);
@@ -1274,10 +1252,8 @@ async function scrapeGoogleShopping(
           if (href) {
             const fullUrl = href.startsWith('http') ? href : `https://www.google.com${href}`;
             productUrl = fullUrl;
-            // FIX 2: Extract store name from URL
             sourceStore = extractStoreFromUrl(fullUrl);
             
-            // FIX 3: Skip non-retailer domains (GSMarena, Samsung.com, etc.)
             if (isNonRetailerDomain(fullUrl)) {
               console.log(`   ⏭️ Skipping non-retailer: ${sourceStore}`);
               continue;
@@ -1307,12 +1283,17 @@ async function scrapeGoogleShopping(
   }
 }
 
+// ========================================
+// MARKETPLACE SCRAPER
+// ========================================
+
 async function scrapeMarketplacePrices(
   config: MarketplaceConfig,
   productName: string,
   fullProductName: string,
   baselinePrice: number,
-  currency: string
+  currency: string,
+  costPrice?: number
 ): Promise<ScrapedProduct[]> {
   const scrapingbeeApiKey = Deno.env.get('SCRAPINGBEE_API_KEY');
   
@@ -1321,35 +1302,34 @@ async function scrapeMarketplacePrices(
     return [];
   }
   
-  // FIX 2: Limit query variations to 2 for speed
+  // FIX 2: Use simplified title for direct marketplace searches
+  const simplifiedName = simplifyTitle(productName);
+  
+  // Limit query variations to 2 for speed
   const searchQueries: string[] = [];
+  searchQueries.push(simplifiedName);
   
-  // Original query
-  searchQueries.push(productName);
-  
-  // For iPhones: try without storage size (broader results)
+  // For iPhones: try without storage size
   const lowerName = productName.toLowerCase();
   if (lowerName.includes('iphone')) {
-    const withoutStorage = productName.replace(/\s*\d+\s*(?:gb|GB|tb|TB)/gi, '').trim();
-    if (withoutStorage !== productName) {
+    const withoutStorage = simplifiedName.replace(/\s*\d+\s*(?:gb|GB|tb|TB)/gi, '').trim();
+    if (withoutStorage !== simplifiedName) {
       searchQueries.push(withoutStorage);
     }
   } else {
-    // Shorter version (first 4 words) for non-iPhones
-    const shorterQuery = productName.split(' ').slice(0, 4).join(' ');
-    if (shorterQuery !== productName) {
+    // Shorter version for non-iPhones
+    const shorterQuery = simplifiedName.split(' ').slice(0, 4).join(' ');
+    if (shorterQuery !== simplifiedName) {
       searchQueries.push(shorterQuery);
     }
   }
   
-  // FIX: Limit to max 2 variations
   const limitedQueries = searchQueries.slice(0, 2);
   
   console.log(`\n🐝 Scraping ${config.name} (${limitedQueries.length} queries)`);
   
   let allProducts: ScrapedProduct[] = [];
   
-  // Try each search query until we get products
   for (let queryIndex = 0; queryIndex < limitedQueries.length; queryIndex++) {
     const query = limitedQueries[queryIndex];
     const searchUrl = config.searchUrl + encodeURIComponent(query);
@@ -1369,198 +1349,403 @@ async function scrapeMarketplacePrices(
       sbUrl.searchParams.set('block_resources', String(config.scrapingBeeOptions.blockResources));
       sbUrl.searchParams.set('block_ads', String(config.scrapingBeeOptions.blockAds));
       sbUrl.searchParams.set('country_code', config.scrapingBeeOptions.countryCode);
-      // FIX 6: Remove premium_proxy for faster response
       sbUrl.searchParams.set('wait_browser', 'load');
       
-      // ✅ FIX 3: Add wait_for selector for JS-heavy marketplaces
-      if (config.name === 'Extra') {
-        sbUrl.searchParams.set('wait_for', 'div.product-tile,div[data-qa="product-tile"],.product-card');
+      // FIX 3: Add stealth_proxy for Saudi marketplaces
+      if (config.useStealthProxy) {
+        sbUrl.searchParams.set('stealth_proxy', 'true');
+        console.log(`   🥷 Using stealth_proxy for ${config.name}`);
       }
-      if (config.name === 'Noon') {
-        sbUrl.searchParams.set('wait_for', 'div[data-qa="product-card"],[class*="productCard"]');
-      }
-      if (config.name === 'Jarir') {
-        sbUrl.searchParams.set('wait_for', '.product-item,.product-item-info,li.product-item');
+      
+      // FIX 3: Add price-based wait_for selectors
+      if (config.waitForSelector) {
+        sbUrl.searchParams.set('wait_for', config.waitForSelector);
+        console.log(`   ⏳ Waiting for: ${config.waitForSelector}`);
       }
       
       const response = await fetch(sbUrl.toString());
       
-      // FIX 4: Skip 503/500 gracefully - don't retry, just move on
+      // Skip 503/500 gracefully
       if (response.status === 503 || response.status === 500) {
         console.log(`⏭️ ${config.name} unavailable (HTTP ${response.status}), skipping...`);
-        break; // Skip this marketplace entirely
+        break;
       }
       
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'Unknown error');
         console.error(`❌ HTTP ${response.status}: ${errorText.slice(0, 200)}`);
-        continue; // Try next query variation
+        continue;
       }
       
       const html = await response.text();
       console.log(`✅ Received ${html.length} chars`);
+      
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      if (!doc) {
+        break;
+      }
+      
+      const containers = trySelectAll(doc, config.selectors.containers);
+      if (containers.length === 0) {
+        const fullBodySnippet = doc.body?.innerHTML?.substring(0, 2000).replace(/\s+/g, ' ') || '';
+        const bodyText = doc.body?.textContent?.toLowerCase() || '';
+        console.error(`❌ No containers found for ${config.name}`);
+        console.log(`   HTML length: ${doc.body?.innerHTML?.length || 0} chars`);
+        console.log(`   Has "product" keyword: ${bodyText.includes('product')}`);
+        console.log(`   Has "price" keyword: ${bodyText.includes('price')}`);
+        console.log(`   HTML sample: ${fullBodySnippet}`);
+        break;
+      }
+      
+      const products: ScrapedProduct[] = [];
+      const normalizedBaseline = normalizeProductName(fullProductName);
+      
+      // Container validation
+      const validContainers = containers.filter((container: any) => {
+        const hasLink = container.querySelector('a[href]');
+        const containerText = container.textContent || '';
+        const hasEnoughText = containerText.length > 20;
+        const hasPricePattern = /\d{3,}/.test(containerText);
+        return hasLink && hasEnoughText && hasPricePattern;
+      });
+      
+      const containersToProcess = validContainers.length >= 3 ? validContainers : containers;
+      console.log(`   📦 Processing ${containersToProcess.length} containers (validated: ${validContainers.length}/${containers.length})`);
+      
+      for (let i = 0; i < Math.min(containersToProcess.length, 50); i++) {
+        const container = containersToProcess[i];
         
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-        if (!doc) {
-          break; // Try next query variation
+        let nameEl = trySelectOne(container, config.selectors.productName);
+        let name = nameEl?.textContent?.trim();
+        
+        // FALLBACK: If CSS selectors fail
+        if (!name) {
+          nameEl = container.querySelector('h1, h2, h3, h4, a[title], a[href*="product"]');
+          name = nameEl?.textContent?.trim();
         }
         
-        const containers = trySelectAll(doc, config.selectors.containers);
-        if (containers.length === 0) {
-          // ✅ Enhanced debug logging
-          const fullBodySnippet = doc.body?.innerHTML?.substring(0, 2000).replace(/\s+/g, ' ') || '';
-          const bodyText = doc.body?.textContent?.toLowerCase() || '';
-          console.error(`❌ No containers found for ${config.name}`);
-          console.log(`   HTML length: ${doc.body?.innerHTML?.length || 0} chars`);
-          console.log(`   Has "product" keyword: ${bodyText.includes('product')}`);
-          console.log(`   Has "price" keyword: ${bodyText.includes('price')}`);
-          console.log(`   HTML sample: ${fullBodySnippet}`);
-          break; // Try next query variation
+        if (!name || name.length < 5) {
+          continue;
         }
         
-        const products: ScrapedProduct[] = [];
-        const normalizedBaseline = normalizeProductName(fullProductName);
+        // Try CSS selectors for price first
+        let priceEl = trySelectOne(container, config.selectors.price);
+        let priceText = priceEl?.textContent?.trim();
         
-        // Container validation - filter to containers that likely have product data
-        const validContainers = containers.filter((container: any) => {
-          const hasLink = container.querySelector('a[href]');
-          const containerText = container.textContent || '';
-          const hasEnoughText = containerText.length > 20;
-          const hasPricePattern = /\d{3,}/.test(containerText);
-          return hasLink && hasEnoughText && hasPricePattern;
+        // FALLBACK for price
+        if (!priceText) {
+          const containerHtml = container.innerHTML || '';
+          const currencyPattern = currency === 'SAR' 
+            ? /(?:SAR|SR|ریال)\s*([0-9,]+(?:\.[0-9]+)?)|([0-9,]+(?:\.[0-9]+)?)\s*(?:SAR|SR|ریال)/gi
+            : /\$\s*([0-9,]+(?:\.[0-9]+)?)|([0-9,]+(?:\.[0-9]+)?)\s*USD/gi;
+          
+          const priceMatch = containerHtml.match(currencyPattern);
+          if (priceMatch && priceMatch.length > 0) {
+            priceText = priceMatch[0];
+          }
+        }
+        
+        if (!priceText) {
+          if (i < 5) {
+            console.log(`   [${i}] ⚠️ No price found for "${name.slice(0, 30)}...". HTML sample: ${container.innerHTML?.substring(0, 300)}`);
+          }
+          continue;
+        }
+        
+        const extracted = extractPrice(priceText, currency, fullProductName);
+        if (!extracted || extracted.price <= 0) {
+          continue;
+        }
+        
+        // FIX 4: Apply Floor Rule validation
+        if (!isValidPrice(extracted.price, baselinePrice, costPrice)) {
+          continue;
+        }
+        
+        const normalizedCompetitor = normalizeProductName(name);
+        const similarity = calculateSimilarity(normalizedBaseline, normalizedCompetitor);
+        const priceRatio = extracted.price / baselinePrice;
+        
+        let adjustedSimilarity = similarity;
+        if (priceRatio < 0.2 || priceRatio > 3.0) {
+          adjustedSimilarity = similarity * 0.6;
+        } else if (priceRatio < 0.4 || priceRatio > 2.5) {
+          adjustedSimilarity = similarity * 0.8;
+        }
+        
+        let productUrl: string | undefined;
+        try {
+          const linkEl = container.querySelector('a[href]');
+          if (linkEl) {
+            const href = linkEl.getAttribute('href');
+            if (href) {
+              productUrl = href.startsWith('http') ? href : new URL(href, config.searchUrl).href;
+            }
+          }
+        } catch (e) {
+          // Ignore URL extraction errors
+        }
+        
+        products.push({
+          name,
+          price: extracted.price,
+          similarity: adjustedSimilarity,
+          priceRatio,
+          url: productUrl
         });
         
-        const containersToProcess = validContainers.length >= 3 ? validContainers : containers;
-        console.log(`   📦 Processing ${containersToProcess.length} containers (validated: ${validContainers.length}/${containers.length})`);
-        
-        let debuggedContainers = 0;
-        
-        for (let i = 0; i < Math.min(containersToProcess.length, 50); i++) {
-          const container = containersToProcess[i];
-          
-          // Try CSS selectors first
-          let nameEl = trySelectOne(container, config.selectors.productName);
-          let name = nameEl?.textContent?.trim();
-          
-          // FALLBACK 1: If CSS selectors fail, try generic heading/link text
-          if (!name) {
-            nameEl = container.querySelector('h1, h2, h3, h4, a[title], a[href*="product"]');
-            name = nameEl?.textContent?.trim();
-          }
-          
-          // FALLBACK 2: Try getting text from the first link's title attribute
-          if (!name) {
-            const firstLink = container.querySelector('a[href]');
-            name = firstLink?.getAttribute('title') || firstLink?.textContent?.trim();
-          }
-          
-          if (!name) {
-            if (debuggedContainers < 3) {
-              console.log(`   [${i}] ⚠️ No name found. HTML sample: ${container.innerHTML?.substring(0, 300)}`);
-              debuggedContainers++;
-            }
-            continue;
-          }
-          
-          // Try CSS selectors for price first
-          let priceEl = trySelectOne(container, config.selectors.price);
-          let priceText = priceEl?.textContent?.trim();
-          
-          // FALLBACK: Search entire container text for price pattern (SAR/SR)
-          if (!priceText) {
-            const containerText = container.textContent || '';
-            // Look for SAR price patterns
-            const priceMatch = containerText.match(/(?:SAR|SR|ر\.س\.?)\s*([0-9,]+(?:\.[0-9]{2})?)/i) 
-              || containerText.match(/([0-9,]+(?:\.[0-9]{2})?)\s*(?:SAR|SR|ر\.س)/i)
-              || containerText.match(/\b([0-9]{3,}(?:,[0-9]{3})*(?:\.[0-9]{2})?)\b/);
-            if (priceMatch) {
-              priceText = priceMatch[0];
-            }
-          }
-          
-          if (!priceText) {
-            if (debuggedContainers < 3) {
-              console.log(`   [${i}] ⚠️ No price found for "${name.substring(0, 30)}...". HTML sample: ${container.innerHTML?.substring(0, 300)}`);
-              debuggedContainers++;
-            }
-            continue;
-          }
-          
-          const extracted = extractPrice(priceText, currency);
-          if (!extracted || extracted.price <= 0) continue;
-          
-          const normalizedCompetitor = normalizeProductName(name);
-          const similarity = calculateSimilarity(normalizedBaseline, normalizedCompetitor);
-          const priceRatio = extracted.price / baselinePrice;
-          
-          let adjustedSimilarity = similarity;
-          if (priceRatio < 0.2 || priceRatio > 5.0) {
-            adjustedSimilarity = similarity * 0.5;
-          } else if (priceRatio < 0.4 || priceRatio > 2.5) {
-            adjustedSimilarity = similarity * 0.8;
-          }
-          
-          // Try to extract product URL
-          let productUrl: string | undefined;
-          try {
-            const linkEl = container.querySelector('a[href]');
-            if (linkEl) {
-              const href = linkEl.getAttribute('href');
-              if (href) {
-                productUrl = href.startsWith('http') ? href : new URL(href, config.searchUrl).href;
-              }
-            }
-          } catch (e) {
-            // Ignore URL extraction errors
-          }
-          
-          products.push({
-            name,
-            price: extracted.price,
-            similarity: adjustedSimilarity,
-            priceRatio,
-            url: productUrl
-          });
-          
-          if (i < 5) {
-            console.log(`   [${i}] "${name.substring(0, 50)}..."`);
-            console.log(`       Similarity: ${(adjustedSimilarity * 100).toFixed(0)}%, Price: ${extracted.price}, Ratio: ${priceRatio.toFixed(2)}x`);
-          }
+        if (i < 5) {
+          console.log(`   [${i}] "${name.substring(0, 50)}..."`);
+          console.log(`       Similarity: ${(adjustedSimilarity * 100).toFixed(0)}%, Price: ${extracted.price}, Ratio: ${priceRatio.toFixed(2)}x`);
         }
-        
-        console.log(`   Extracted ${products.length} products`);
-        
-        if (products.length > 0) {
-          // Found products, add to collection
-          allProducts = allProducts.concat(products);
-          console.log(`✓ Query variation ${queryIndex + 1} found ${products.length} products`);
-          break; // Exit retry loop
-        } else {
-          // Enhanced debug: show first container's full HTML when no products extracted
-          if (containersToProcess.length > 0) {
-            console.log(`   ❌ Found ${containersToProcess.length} containers but extracted 0 products`);
-            console.log(`   📝 First container HTML sample:`);
-            console.log(containersToProcess[0]?.innerHTML?.substring(0, 500));
-          }
-          break; // Try next query variation
-        }
-        
-      } catch (error: any) {
-        console.error(`❌ Error scraping ${config.name}:`, error.message);
-        continue; // Try next query variation
       }
+      
+      console.log(`   Extracted ${products.length} products`);
+      
+      if (products.length > 0) {
+        allProducts = allProducts.concat(products);
+        console.log(`✓ Query variation ${queryIndex + 1} found ${products.length} products`);
+        break;
+      } else {
+        if (containersToProcess.length > 0) {
+          console.log(`   ❌ Found ${containersToProcess.length} containers but extracted 0 products`);
+          console.log(`   📝 First container HTML sample:`);
+          console.log(containersToProcess[0]?.innerHTML?.substring(0, 500));
+        }
+        break;
+      }
+      
+    } catch (error: any) {
+      console.error(`❌ Error scraping ${config.name}:`, error.message);
+      continue;
+    }
     
-    // If we got products from this query, stop trying variations
     if (allProducts.length > 0) {
       break;
     }
   }
   
-  // Sort by similarity DESC, keep top 20
   return allProducts
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, 20);
+}
+
+// ========================================
+// SINGLE MARKETPLACE SCRAPER WITH TIMEOUT
+// ========================================
+
+async function scrapeMarketplaceWithTimeout(
+  marketplaceKey: string,
+  config: MarketplaceConfig,
+  coreProductName: string,
+  baseline: any,
+  baselineIsAccessory: boolean,
+  supabase: any
+): Promise<ScrapeResult> {
+  const startTime = Date.now();
+  
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`📡 [${marketplaceKey}] Starting scrape at ${new Date().toISOString()}`);
+  console.log(`   Config: wait=${config.scrapingBeeOptions.wait}ms, country=${config.scrapingBeeOptions.countryCode}`);
+  console.log(`   URL pattern: ${config.searchUrl}`);
+  console.log(`${'='.repeat(60)}`);
+  
+  try {
+    let products: ScrapedProduct[] = [];
+    
+    // Scrape with timeout
+    try {
+      const scrapeStartTime = Date.now();
+      
+      if (marketplaceKey === 'google-shopping') {
+        console.log(`   🛒 Using Google Shopping scraper...`);
+        products = await Promise.race([
+          scrapeGoogleShopping(
+            coreProductName,
+            baseline.current_price,
+            baseline.currency,
+            baseline.product_name
+          ),
+          new Promise<ScrapedProduct[]>((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), MARKETPLACE_TIMEOUT)
+          )
+        ]);
+      } else {
+        console.log(`   🏪 Using marketplace scraper for ${config.name}...`);
+        products = await Promise.race([
+          scrapeMarketplacePrices(
+            config,
+            coreProductName,
+            baseline.product_name,
+            baseline.current_price,
+            baseline.currency,
+            baseline.cost_per_unit
+          ),
+          new Promise<ScrapedProduct[]>((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout')), MARKETPLACE_TIMEOUT)
+          )
+        ]);
+      }
+      
+      const scrapeEndTime = Date.now();
+      console.log(`   ⏱️ Scrape completed in ${scrapeEndTime - scrapeStartTime}ms`);
+      console.log(`   📦 Raw products returned: ${products.length}`);
+      
+    } catch (timeoutError: any) {
+      if (timeoutError.message === 'Timeout') {
+        const elapsed = Date.now() - startTime;
+        console.log(`   ❌ TIMEOUT after ${elapsed}ms (limit: ${MARKETPLACE_TIMEOUT}ms)`);
+        console.log(`   📊 Diagnosis: ScrapingBee or website too slow`);
+        
+        return {
+          marketplace: config.name,
+          products: [],
+          status: 'timeout',
+          elapsed
+        };
+      }
+      throw timeoutError;
+    }
+    
+    // Log what we got
+    if (products.length === 0) {
+      console.log(`   ⚠️ NO PRODUCTS RETURNED`);
+      console.log(`   📊 Diagnosis: Either wrong selectors OR website blocked/empty`);
+    } else {
+      console.log(`   ✅ Got ${products.length} products before filtering`);
+      products.slice(0, 3).forEach((p, i) => {
+        console.log(`      [${i}] "${p.name.slice(0, 50)}..." - ${p.price} ${baseline.currency} (sim: ${(p.similarity * 100).toFixed(0)}%)`);
+      });
+    }
+    
+    // Apply accessory filtering
+    if (products.length > 0) {
+      const beforeFilter = products.length;
+      
+      if (baselineIsAccessory) {
+        products = products.filter(product => {
+          const isAccessory = isAccessoryOrReplacement(product.name);
+          if (!isAccessory) {
+            console.log(`   ⏭️ Filtered main product: "${product.name.slice(0, 40)}..."`);
+          }
+          return isAccessory;
+        });
+        console.log(`   🔍 Accessory filter: ${beforeFilter} → ${products.length} (kept accessories)`);
+      } else {
+        products = products.filter(product => {
+          const isAccessory = isAccessoryOrReplacement(product.name);
+          if (isAccessory) {
+            console.log(`   ⏭️ Filtered accessory: "${product.name.slice(0, 40)}..."`);
+          }
+          return !isAccessory;
+        });
+        console.log(`   🔍 Accessory filter: ${beforeFilter} → ${products.length} (removed accessories)`);
+      }
+    }
+    
+    // Model mismatch filtering for electronics
+    if (baseline.category === 'Electronics & Technology' && products.length > 0) {
+      const beforeModelFilter = products.length;
+      products = products.filter(product => {
+        const isMismatch = isModelMismatch(baseline.product_name, product.name);
+        if (isMismatch) {
+          console.log(`   ⏭️ Model mismatch: "${product.name.slice(0, 40)}..."`);
+        }
+        return !isMismatch;
+      });
+      console.log(`   🔍 Model filter: ${beforeModelFilter} → ${products.length}`);
+    }
+    
+    // AI validation for medium confidence products
+    if (products.length > 0) {
+      const mediumConfidenceProducts = products.filter(p => p.similarity >= 0.30 && p.similarity < 0.80);
+      
+      if (mediumConfidenceProducts.length > 0) {
+        console.log(`   🤖 AI validating ${mediumConfidenceProducts.length} medium-confidence products...`);
+        
+        for (let i = 0; i < mediumConfidenceProducts.length; i += 5) {
+          const batch = mediumConfidenceProducts.slice(i, i + 5);
+          
+          await Promise.all(batch.map(async (product) => {
+            try {
+              const { data: validationResult, error: validationError } = await supabase.functions.invoke('validate-competitor', {
+                body: {
+                  your_product_name: baseline.product_name,
+                  competitor_product_name: product.name,
+                  marketplace: marketplaceKey,
+                  baseline_price: baseline.current_price,
+                  competitor_price: product.price,
+                  similarity_score: product.similarity
+                }
+              });
+              
+              if (validationError) {
+                console.log(`      ⚠️ AI error for "${product.name.slice(0, 30)}..."`);
+                return;
+              }
+              
+              const decision = validationResult?.decision?.toLowerCase().replace(/_/g, '');
+              if (decision === 'accessory' || decision === 'differentproduct' || decision === 'different') {
+                console.log(`      🤖 AI rejected: "${product.name.slice(0, 30)}..." → ${validationResult.decision}`);
+                product.similarity = -1;
+              }
+            } catch (e) {
+              console.log(`      ⚠️ AI exception: ${e}`);
+            }
+          }));
+        }
+        
+        const beforeAiFilter = products.length;
+        products = products.filter(p => p.similarity >= 0);
+        if (beforeAiFilter > products.length) {
+          console.log(`   🤖 AI filter: ${beforeAiFilter} → ${products.length}`);
+        }
+      }
+    }
+    
+    // Similarity threshold
+    if (products.length > 0) {
+      const beforeSimilarityFilter = products.length;
+      products = products.filter(p => p.similarity >= 0.60);
+      if (beforeSimilarityFilter > products.length) {
+        console.log(`   🎯 Similarity filter: ${beforeSimilarityFilter} → ${products.length} (removed <60%)`);
+      }
+    }
+    
+    const elapsed = Date.now() - startTime;
+    
+    if (products.length > 0) {
+      console.log(`   📊 RESULT: SUCCESS - ${products.length} products in ${elapsed}ms`);
+      return {
+        marketplace: config.name,
+        products,
+        status: 'success',
+        elapsed
+      };
+    } else {
+      console.log(`   📊 RESULT: NO DATA - 0 products after filtering in ${elapsed}ms`);
+      console.log(`   📊 Diagnosis: Products found but all filtered out OR wrong selectors`);
+      return {
+        marketplace: config.name,
+        products: [],
+        status: 'no_data',
+        elapsed
+      };
+    }
+    
+  } catch (error: any) {
+    const elapsed = Date.now() - startTime;
+    console.error(`   ❌ ERROR after ${elapsed}ms:`, error.message);
+    
+    return {
+      marketplace: config.name,
+      products: [],
+      status: 'error',
+      elapsed,
+      error: error?.message || 'Unknown error'
+    };
+  }
 }
 
 // ========================================
@@ -1631,16 +1816,19 @@ serve(async (req) => {
       });
     }
 
-    console.log('Refreshing competitor prices');
+    console.log('🚀 Refreshing competitor prices');
+    console.log(`   Product: "${baseline.product_name}"`);
+    console.log(`   Baseline Price: ${baseline.current_price} ${baseline.currency}`);
+    console.log(`   Cost: ${baseline.cost_per_unit || 'N/A'} ${baseline.currency}`);
     
     // Check if baseline product is an accessory
     const baselineIsAccessory = isAccessoryOrReplacement(baseline.product_name);
-    console.log(`Baseline is ${baselineIsAccessory ? 'accessory' : 'main product'}`);
-    console.log(`Filter mode: ${baselineIsAccessory ? 'Keep accessories' : 'Filter accessories'}`);
+    console.log(`   Type: ${baselineIsAccessory ? 'Accessory' : 'Main Product'}`);
+    console.log(`   Filter mode: ${baselineIsAccessory ? 'Keep accessories' : 'Filter accessories'}`);
     
     // Extract core product name for better search results
     const coreProductName = extractCoreProductName(baseline.product_name);
-    console.log('Using', coreProductName === baseline.product_name ? 'full name' : 'core product name');
+    console.log(`   Core name: "${coreProductName}"`);
 
     // Delete existing data for this baseline
     await supabase
@@ -1653,318 +1841,140 @@ serve(async (req) => {
       .delete()
       .eq('baseline_id', baseline_id);
 
-    // SEQUENTIAL SCRAPING ORDER FOR DEBUGGING
-    // Step 1: Google Shopping (most reliable)
-    // Step 2: Amazon (usually works)
-    // Step 3-5: Saudi marketplaces (Noon, Extra, Jarir) with detailed logging
+    // Select marketplaces based on currency
     const marketplaceKeys = baseline.currency === 'SAR' 
       ? ['google-shopping', 'amazon', 'noon', 'extra', 'jarir']
       : ['google-shopping', 'amazon-us', 'walmart', 'ebay', 'target'];
 
+    // ========================================
+    // FIX 1: PARALLEL SCRAPING WITH SAFE Promise.all
+    // ========================================
+    console.log(`\n🚀 Starting PARALLEL scraping (${marketplaceKeys.length} marketplaces)...`);
+    console.log(`   Marketplaces: ${marketplaceKeys.join(', ')}`);
+    console.log(`   Timeout per marketplace: ${MARKETPLACE_TIMEOUT / 1000}s`);
+    
+    // Fire all scrapers in parallel - each with its own try/catch
+    const scrapeResults = await Promise.all(
+      marketplaceKeys.map(async (marketplaceKey) => {
+        const config = MARKETPLACE_CONFIGS[marketplaceKey];
+        
+        // Each scraper wrapped in try/catch - one failure won't stop others
+        try {
+          return await scrapeMarketplaceWithTimeout(
+            marketplaceKey,
+            config,
+            coreProductName,
+            baseline,
+            baselineIsAccessory,
+            supabase
+          );
+        } catch (err: any) {
+          // Catch ANY unexpected error - never let it escape
+          console.log(`❌ ${config.name} crashed: ${err.message}`);
+          return {
+            marketplace: config.name,
+            products: [],
+            status: 'error' as const,
+            elapsed: 0,
+            error: err.message
+          };
+        }
+      })
+    );
+
+    // Summary
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`📊 PARALLEL SCRAPING SUMMARY`);
+    console.log(`${'='.repeat(60)}`);
+    
     const results: any[] = [];
-    const lowConfidenceProducts: string[] = [];
     const failedMarketplaces: string[] = [];
     let foundValidProducts = false;
     
-    // Increased timeout for debugging (40 seconds)
-    const MARKETPLACE_TIMEOUT = 40000;
-
-    // ✅ SEQUENTIAL SCRAPING FOR DEBUGGING
-    console.log(`\n🔬 Starting SEQUENTIAL scraping for debugging (${marketplaceKeys.length} marketplaces)...`);
-    console.log(`   Order: ${marketplaceKeys.join(' → ')}`);
-    
-    for (const marketplaceKey of marketplaceKeys) {
-      const config = MARKETPLACE_CONFIGS[marketplaceKey];
-      const startTime = Date.now();
+    for (let i = 0; i < scrapeResults.length; i++) {
+      const result = scrapeResults[i];
+      const marketplaceKey = marketplaceKeys[i];
       
-      console.log(`\n${'='.repeat(60)}`);
-      console.log(`📡 [${marketplaceKey}] Starting scrape at ${new Date().toISOString()}`);
-      console.log(`   Config: wait=${config.scrapingBeeOptions.wait}ms, country=${config.scrapingBeeOptions.countryCode}`);
-      console.log(`   URL pattern: ${config.searchUrl}`);
-      console.log(`${'='.repeat(60)}`);
+      const statusIcon = result.status === 'success' ? '✅' : result.status === 'timeout' ? '⏱️' : '❌';
+      console.log(`${statusIcon} ${result.marketplace}: ${result.status} (${result.elapsed}ms)${result.products.length ? ` - ${result.products.length} products` : ''}`);
       
-      try {
-        let products: ScrapedProduct[] = [];
+      // Save results to database
+      if (result.products.length > 0) {
+        foundValidProducts = true;
         
-        // Scrape with detailed timing
-        try {
-          const scrapeStartTime = Date.now();
-          
-          if (marketplaceKey === 'google-shopping') {
-            console.log(`   🛒 Using Google Shopping scraper...`);
-            products = await Promise.race([
-              scrapeGoogleShopping(
-                coreProductName,
-                baseline.current_price,
-                baseline.currency,
-                baseline.product_name
-              ),
-              new Promise<ScrapedProduct[]>((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout')), MARKETPLACE_TIMEOUT)
-              )
-            ]);
-          } else {
-            console.log(`   🏪 Using marketplace scraper for ${config.name}...`);
-            products = await Promise.race([
-              scrapeMarketplacePrices(
-                config,
-                coreProductName,
-                baseline.product_name,
-                baseline.current_price,
-                baseline.currency
-              ),
-              new Promise<ScrapedProduct[]>((_, reject) => 
-                setTimeout(() => reject(new Error('Timeout')), MARKETPLACE_TIMEOUT)
-              )
-            ]);
-          }
-          
-          const scrapeEndTime = Date.now();
-          console.log(`   ⏱️ Scrape completed in ${scrapeEndTime - scrapeStartTime}ms`);
-          console.log(`   📦 Raw products returned: ${products.length}`);
-          
-        } catch (timeoutError: any) {
-          if (timeoutError.message === 'Timeout') {
-            const elapsed = Date.now() - startTime;
-            console.log(`   ❌ TIMEOUT after ${elapsed}ms (limit: ${MARKETPLACE_TIMEOUT}ms)`);
-            console.log(`   📊 Diagnosis: ScrapingBee or website too slow`);
-            failedMarketplaces.push(marketplaceKey);
-            
-            await supabase.from('competitor_prices').insert({
-              baseline_id,
-              merchant_id: baseline.merchant_id,
-              marketplace: marketplaceKey,
-              currency: baseline.currency,
-              fetch_status: 'timeout'
-            });
-            
-            results.push({ marketplace: config.name, status: 'timeout', elapsed });
-            continue; // Move to next marketplace
-          }
-          throw timeoutError;
+        const productRows = result.products.map((product: ScrapedProduct, index: number) => ({
+          baseline_id,
+          merchant_id: baseline.merchant_id,
+          marketplace: marketplaceKey === 'google-shopping' && product.sourceStore && product.sourceStore !== 'Unknown'
+            ? product.sourceStore
+            : marketplaceKey === 'google-shopping' ? 'Google' : marketplaceKey,
+          product_name: product.name,
+          price: product.price,
+          similarity_score: product.similarity,
+          price_ratio: product.priceRatio,
+          product_url: product.url,
+          currency: baseline.currency,
+          rank: index + 1
+        }));
+        
+        const { error: productsError } = await supabase
+          .from('competitor_products')
+          .insert(productRows);
+        
+        if (productsError) {
+          console.error(`   ❌ DB insert error for ${result.marketplace}:`, productsError);
         }
         
-        // Log what we got
-        if (products.length === 0) {
-          console.log(`   ⚠️ NO PRODUCTS RETURNED`);
-          console.log(`   📊 Diagnosis: Either wrong selectors OR website blocked/empty`);
-        } else {
-          console.log(`   ✅ Got ${products.length} products before filtering`);
-          // Log first 3 products for debugging
-          products.slice(0, 3).forEach((p, i) => {
-            console.log(`      [${i}] "${p.name.slice(0, 50)}..." - ${p.price} ${baseline.currency} (sim: ${(p.similarity * 100).toFixed(0)}%)`);
-          });
-        }
+        const highSimilarityProducts = result.products.filter((p: ScrapedProduct) => p.similarity >= 0.60);
+        const prices = highSimilarityProducts.map((p: ScrapedProduct) => p.price);
+        const lowest = Math.min(...prices);
+        const highest = Math.max(...prices);
+        const average = prices.reduce((a: number, b: number) => a + b, 0) / prices.length;
         
-        // Apply accessory filtering
-        if (products.length > 0) {
-          const beforeFilter = products.length;
-          
-          if (baselineIsAccessory) {
-            products = products.filter(product => {
-              const isAccessory = isAccessoryOrReplacement(product.name);
-              if (!isAccessory) {
-                console.log(`   ⏭️ Filtered main product: "${product.name.slice(0, 40)}..."`);
-              }
-              return isAccessory;
-            });
-            console.log(`   🔍 Accessory filter: ${beforeFilter} → ${products.length} (kept accessories)`);
-          } else {
-            products = products.filter(product => {
-              const isAccessory = isAccessoryOrReplacement(product.name);
-              if (isAccessory) {
-                console.log(`   ⏭️ Filtered accessory: "${product.name.slice(0, 40)}..."`);
-              }
-              return !isAccessory;
-            });
-            console.log(`   🔍 Accessory filter: ${beforeFilter} → ${products.length} (removed accessories)`);
-          }
-        }
+        await supabase.from('competitor_prices').insert({
+          baseline_id,
+          merchant_id: baseline.merchant_id,
+          marketplace: marketplaceKey,
+          lowest_price: lowest,
+          average_price: average,
+          highest_price: highest,
+          currency: baseline.currency,
+          products_found: highSimilarityProducts.length,
+          fetch_status: 'success'
+        });
         
-        // Model mismatch filtering for electronics
-        if (baseline.category === 'Electronics & Technology' && products.length > 0) {
-          const beforeModelFilter = products.length;
-          products = products.filter(product => {
-            const isMismatch = isModelMismatch(baseline.product_name, product.name);
-            if (isMismatch) {
-              console.log(`   ⏭️ Model mismatch: "${product.name.slice(0, 40)}..."`);
-            }
-            return !isMismatch;
-          });
-          console.log(`   🔍 Model filter: ${beforeModelFilter} → ${products.length}`);
-        }
-        
-        // AI validation for medium confidence products
-        if (products.length > 0) {
-          const mediumConfidenceProducts = products.filter(p => p.similarity >= 0.30 && p.similarity < 0.80);
-          
-          if (mediumConfidenceProducts.length > 0) {
-            console.log(`   🤖 AI validating ${mediumConfidenceProducts.length} medium-confidence products...`);
-            
-            for (let i = 0; i < mediumConfidenceProducts.length; i += 5) {
-              const batch = mediumConfidenceProducts.slice(i, i + 5);
-              
-              await Promise.all(batch.map(async (product) => {
-                try {
-                  const { data: validationResult, error: validationError } = await supabase.functions.invoke('validate-competitor', {
-                    body: {
-                      your_product_name: baseline.product_name,
-                      competitor_product_name: product.name,
-                      marketplace: marketplaceKey,
-                      baseline_price: baseline.current_price,
-                      competitor_price: product.price,
-                      similarity_score: product.similarity
-                    }
-                  });
-                  
-                  if (validationError) {
-                    console.log(`      ⚠️ AI error for "${product.name.slice(0, 30)}..."`);
-                    return;
-                  }
-                  
-                  const decision = validationResult?.decision?.toLowerCase().replace(/_/g, '');
-                  if (decision === 'accessory' || decision === 'differentproduct' || decision === 'different') {
-                    console.log(`      🤖 AI rejected: "${product.name.slice(0, 30)}..." → ${validationResult.decision}`);
-                    product.similarity = -1;
-                  }
-                } catch (e) {
-                  console.log(`      ⚠️ AI exception: ${e}`);
-                }
-              }));
-            }
-            
-            const beforeAiFilter = products.length;
-            products = products.filter(p => p.similarity >= 0);
-            if (beforeAiFilter > products.length) {
-              console.log(`   🤖 AI filter: ${beforeAiFilter} → ${products.length}`);
-            }
-          }
-        }
-        
-        // Similarity threshold
-        if (products.length > 0) {
-          const beforeSimilarityFilter = products.length;
-          products = products.filter(p => p.similarity >= 0.60);
-          if (beforeSimilarityFilter > products.length) {
-            console.log(`   🎯 Similarity filter: ${beforeSimilarityFilter} → ${products.length} (removed <60%)`);
-          }
-        }
-        
-        // Save results
-        if (products.length > 0) {
-          foundValidProducts = true;
-          
-          products.forEach(p => {
-            if (p.similarity < 0.30) {
-              lowConfidenceProducts.push(p.name);
-            }
-          });
-          
-          const productRows = products.map((product, index) => ({
-            baseline_id,
-            merchant_id: baseline.merchant_id,
-            marketplace: marketplaceKey === 'google-shopping' && product.sourceStore && product.sourceStore !== 'Unknown'
-              ? product.sourceStore
-              : marketplaceKey === 'google-shopping' ? 'Google' : marketplaceKey,
-            product_name: product.name,
-            price: product.price,
-            similarity_score: product.similarity,
-            price_ratio: product.priceRatio,
-            product_url: product.url,
-            currency: baseline.currency,
-            rank: index + 1
-          }));
-          
-          const { error: productsError } = await supabase
-            .from('competitor_products')
-            .insert(productRows);
-          
-          if (productsError) {
-            console.error(`   ❌ DB insert error:`, productsError);
-          } else {
-            console.log(`   ✅ Saved ${products.length} products to DB`);
-          }
-          
-          const highSimilarityProducts = products.filter(p => p.similarity >= 0.60);
-          const prices = highSimilarityProducts.map(p => p.price);
-          const lowest = Math.min(...prices);
-          const highest = Math.max(...prices);
-          const average = prices.reduce((a, b) => a + b, 0) / prices.length;
-          
-          await supabase.from('competitor_prices').insert({
-            baseline_id,
-            merchant_id: baseline.merchant_id,
-            marketplace: marketplaceKey,
-            lowest_price: lowest,
-            average_price: average,
-            highest_price: highest,
-            currency: baseline.currency,
-            products_found: highSimilarityProducts.length,
-            fetch_status: 'success'
-          });
-          
-          const elapsed = Date.now() - startTime;
-          console.log(`   📊 RESULT: SUCCESS - ${highSimilarityProducts.length} products (${lowest.toFixed(0)}-${highest.toFixed(0)} ${baseline.currency}) in ${elapsed}ms`);
-          
-          results.push({
-            marketplace: config.name,
-            status: 'success',
-            products_found: highSimilarityProducts.length,
-            lowest,
-            average,
-            highest,
-            elapsed
-          });
-        } else {
-          failedMarketplaces.push(marketplaceKey);
-          
-          await supabase.from('competitor_prices').insert({
-            baseline_id,
-            merchant_id: baseline.merchant_id,
-            marketplace: marketplaceKey,
-            currency: baseline.currency,
-            fetch_status: 'no_data'
-          });
-          
-          const elapsed = Date.now() - startTime;
-          console.log(`   📊 RESULT: NO DATA - 0 products after filtering in ${elapsed}ms`);
-          console.log(`   📊 Diagnosis: Products found but all filtered out OR wrong selectors`);
-          
-          results.push({ marketplace: config.name, status: 'no_data', elapsed });
-        }
-        
-      } catch (error: any) {
-        const elapsed = Date.now() - startTime;
-        console.error(`   ❌ ERROR after ${elapsed}ms:`, error.message);
+        results.push({
+          marketplace: result.marketplace,
+          status: 'success',
+          products_found: highSimilarityProducts.length,
+          lowest,
+          average,
+          highest,
+          elapsed: result.elapsed
+        });
+      } else {
+        failedMarketplaces.push(marketplaceKey);
         
         await supabase.from('competitor_prices').insert({
           baseline_id,
           merchant_id: baseline.merchant_id,
           marketplace: marketplaceKey,
           currency: baseline.currency,
-          fetch_status: 'failed'
+          fetch_status: result.status
         });
         
         results.push({
-          marketplace: config.name,
-          status: 'failed',
-          error: error?.message || 'Unknown error',
-          elapsed
+          marketplace: result.marketplace,
+          status: result.status,
+          elapsed: result.elapsed,
+          error: result.error
         });
       }
     }
     
-    // Summary
-    console.log(`\n${'='.repeat(60)}`);
-    console.log(`📊 SEQUENTIAL SCRAPING SUMMARY`);
     console.log(`${'='.repeat(60)}`);
-    for (const result of results) {
-      const statusIcon = result.status === 'success' ? '✅' : result.status === 'timeout' ? '⏱️' : '❌';
-      console.log(`${statusIcon} ${result.marketplace}: ${result.status} (${result.elapsed}ms)${result.products_found ? ` - ${result.products_found} products` : ''}`);
-    }
-    console.log(`${'='.repeat(60)}`)
 
-    // FIX 5: Count total valid products across all marketplaces
+    // Count total valid products
     const { data: totalProducts } = await supabase
       .from('competitor_products')
       .select('id', { count: 'exact' })
@@ -1973,7 +1983,7 @@ serve(async (req) => {
     const totalProductCount = totalProducts?.length || 0;
     console.log(`\n📊 Total products found across all marketplaces: ${totalProductCount}`);
     
-    // GOOGLE FALLBACK: Trigger if insufficient products (< 3) OR marketplace failed OR low confidence
+    // GOOGLE FALLBACK: Trigger if insufficient products
     const insufficientProducts = totalProductCount < 3;
     const shouldUseGoogleFallback = insufficientProducts || !foundValidProducts || failedMarketplaces.length >= 2;
     
@@ -1988,10 +1998,8 @@ serve(async (req) => {
       }
       
       try {
-        // ✅ Try both Google Shopping and Google SERP
         let googleProducts: ScrapedProduct[] = [];
         
-        // First try Google Shopping (more product-focused)
         const shoppingProducts = await scrapeGoogleShopping(
           coreProductName,
           baseline.current_price,
@@ -2003,7 +2011,6 @@ serve(async (req) => {
           console.log(`✓ Google Shopping found ${shoppingProducts.length} products`);
           googleProducts = shoppingProducts;
         } else {
-          // Fallback to regular Google SERP
           console.log(`⚠️ Google Shopping returned 0, trying regular SERP...`);
           googleProducts = await scrapeGoogleSERP(
             coreProductName,
@@ -2013,43 +2020,40 @@ serve(async (req) => {
           );
         }
         
-        // FIX 1: Apply smart accessory filtering for Google fallback
+        // Apply accessory filtering
         if (googleProducts.length > 0) {
           const beforeFilter = googleProducts.length;
           if (baselineIsAccessory) {
-            // Keep accessories, filter out main products
             googleProducts = googleProducts.filter(product => isAccessoryOrReplacement(product.name));
             console.log(`🔍 Google filtering: ${beforeFilter} → ${googleProducts.length} products (kept accessories)`);
           } else {
-            // Filter out accessories
             googleProducts = googleProducts.filter(product => !isAccessoryOrReplacement(product.name));
             console.log(`🔍 Google filtering: ${beforeFilter} → ${googleProducts.length} products`);
           }
         }
         
-        // Apply model mismatch filtering for electronics
+        // Model mismatch filtering
         if (baseline.category === 'Electronics & Technology' && googleProducts.length > 0) {
           const beforeModelFilter = googleProducts.length;
           googleProducts = googleProducts.filter(product => !isModelMismatch(baseline.product_name, product.name));
           console.log(`🔍 Google model filtering: ${beforeModelFilter} → ${googleProducts.length} products`);
         }
         
-        // ✅ FIX 3: Apply 60% similarity threshold to Google products too
+        // Similarity threshold
         if (googleProducts.length > 0) {
           const beforeSimilarityFilter = googleProducts.length;
           googleProducts = googleProducts.filter(p => p.similarity >= 0.60);
           if (beforeSimilarityFilter > googleProducts.length) {
-            console.log(`🎯 Google similarity filter: ${beforeSimilarityFilter} → ${googleProducts.length} products (removed ${beforeSimilarityFilter - googleProducts.length} below 60%)`);
+            console.log(`🎯 Google similarity filter: ${beforeSimilarityFilter} → ${googleProducts.length} products`);
           }
         }
         
         if (googleProducts.length > 0) {
-          // FIX 2: Use actual store name, not "google-shopping (StoreName)"
           const productRows = googleProducts.map((product, index) => ({
             baseline_id,
             merchant_id: baseline.merchant_id,
             marketplace: product.sourceStore && product.sourceStore !== 'Unknown'
-              ? product.sourceStore  // Just "Noon", not "google-shopping (Noon)"
+              ? product.sourceStore
               : 'Google',
             product_name: product.name,
             price: product.price,
@@ -2062,7 +2066,6 @@ serve(async (req) => {
           
           await supabase.from('competitor_products').insert(productRows);
           
-          // ✅ FIX 5: Only use high similarity products for average
           const highSimilarityProducts = googleProducts.filter(p => p.similarity >= 0.60);
           const prices = highSimilarityProducts.map(p => p.price);
           await supabase.from('competitor_prices').insert({
@@ -2085,7 +2088,6 @@ serve(async (req) => {
           
           console.log(`✓ Google fallback found ${googleProducts.length} products`);
         } else {
-          // Add to manual review queue
           await supabase.from('manual_review_queue').insert({
             baseline_id,
             merchant_id: baseline.merchant_id,
