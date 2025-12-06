@@ -24,6 +24,8 @@ interface CompetitorProduct {
   rank: number;
   product_url: string | null;
   filterReason?: string;
+  is_cached?: boolean;
+  cached_from_baseline_id?: string | null;
 }
 
 interface ProductDetail {
@@ -223,10 +225,15 @@ const AdminProductDetails = () => {
                                   >
                                     <div className="flex items-start justify-between mb-2">
                                       <div className="flex-1">
-                                        <div className="flex items-center gap-2 mb-1">
+                                        <div className="flex items-center gap-2 mb-1 flex-wrap">
                                           <Badge variant="outline" className="text-xs">
                                             Rank #{comp.rank}
                                           </Badge>
+                                          {comp.is_cached && (
+                                            <Badge variant="secondary" className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
+                                              📦 Cached
+                                            </Badge>
+                                          )}
                                           <span className="font-medium">{comp.product_name}</span>
                                         </div>
                                         <p className="text-sm text-muted-foreground">{comp.marketplace}</p>

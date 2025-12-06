@@ -153,9 +153,14 @@ Currency,${baseline.currency}
 
 PRICING RECOMMENDATION
 Current Price,${baseline.current_price}
-Optimal Price,${results.optimal_price}
 Suggested Price,${results.suggested_price}
 Price Change,${(((results.suggested_price - baseline.current_price) / baseline.current_price) * 100).toFixed(2)}%
+
+REVENUE & DEMAND ANALYSIS
+Current Monthly Revenue,${baseline.current_price * baseline.current_quantity}
+Projected Monthly Revenue,${results.suggested_price * baseline.current_quantity}
+Current Monthly Demand,${baseline.current_quantity}
+Projected Monthly Demand,${Math.round(baseline.current_quantity * (1 + Math.abs(results.calibrated_elasticity) * (((results.suggested_price - baseline.current_price) / baseline.current_price) * 100) / 100))}
 
 PROFIT ANALYSIS
 Current Monthly Profit,${(baseline.current_price - baseline.cost_per_unit) * baseline.current_quantity}
@@ -360,16 +365,6 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                 </div>
               </div>
               
-              <div className="flex justify-between items-center pb-3 border-b">
-                <span className="text-sm font-medium text-muted-foreground">
-                  Theoretical Optimal:
-                  <span className="ml-1 text-xs">(Max profit, no market constraints)</span>
-                </span>
-                <div className="text-lg font-semibold text-muted-foreground">
-                  {results.optimal_price.toFixed(2)} <span className="text-sm">{baseline.currency}</span>
-                </div>
-              </div>
-              
               <div className="flex justify-between items-center">
                 <span className="text-sm font-medium text-muted-foreground">Price Change:</span>
                 <div className="flex items-center gap-2">
@@ -386,6 +381,42 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
             </div>
 
             <div className="space-y-4">
+              {/* Monthly Revenue Section */}
+              <div className="flex justify-between items-center pb-3 border-b">
+                <span className="text-sm font-medium text-muted-foreground">Current Monthly Revenue:</span>
+                <span className="text-base font-semibold text-foreground">
+                  {formatPrice(baseline.current_price * baseline.current_quantity, baseline.currency)}
+                </span>
+              </div>
+              
+              <div className="flex justify-between items-center pb-3 border-b">
+                <span className="text-sm font-medium text-muted-foreground">Projected Monthly Revenue:</span>
+                <span className={`text-base font-semibold ${isProfitIncrease ? 'text-success' : 'text-foreground'}`}>
+                  {formatPrice(results.suggested_price * baseline.current_quantity * (1 + Math.abs(results.calibrated_elasticity) * (priceChange / 100) * (priceChange < 0 ? 1 : -1)), baseline.currency)}
+                </span>
+              </div>
+              
+              {/* Monthly Demand Section */}
+              <div className="flex justify-between items-center pb-3 border-b">
+                <span className="text-sm font-medium text-muted-foreground">Current Monthly Demand:</span>
+                <span className="text-base font-semibold text-foreground">
+                  {formatNumber(baseline.current_quantity, 0)} units
+                </span>
+              </div>
+              
+              <div className="flex justify-between items-center pb-3 border-b">
+                <span className="text-sm font-medium text-muted-foreground">Projected Monthly Demand:</span>
+                <span className={`text-base font-semibold ${priceChange < 0 ? 'text-success' : priceChange > 0 ? 'text-destructive' : 'text-foreground'}`}>
+                  {formatNumber(baseline.current_quantity * (1 + Math.abs(results.calibrated_elasticity) * (priceChange / 100) * (priceChange < 0 ? 1 : -1)), 0)} units
+                  {priceChange !== 0 && (
+                    <span className="text-xs ml-1">
+                      ({priceChange < 0 ? '+' : ''}{formatNumber(Math.abs(results.calibrated_elasticity) * Math.abs(priceChange) * (priceChange < 0 ? 1 : -1), 1)}%)
+                    </span>
+                  )}
+                </span>
+              </div>
+              
+              {/* Profit Section */}
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Current Monthly Profit:</span>
                 <span className="text-base font-semibold text-foreground">
@@ -429,7 +460,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
               <div className="flex items-start gap-3">
                 <Info className="w-5 h-5 text-primary mt-0.5 flex-shrink-0" />
                 <div className="space-y-2 text-sm">
-                  <p className="font-semibold text-foreground">Understanding the Prices:</p>
+                  <p className="font-semibold text-foreground">Understanding the Metrics:</p>
                   <ul className="space-y-1.5 text-muted-foreground">
                     <li className="flex items-start gap-2">
                       <span className="text-primary font-bold mt-0.5">⭐</span>
@@ -437,11 +468,15 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="text-muted-foreground mt-0.5">•</span>
-                      <span><strong>Theoretical Optimal:</strong> Pure profit-maximizing price from elasticity formula, without considering competitor prices or market reality.</span>
+                      <span><strong>Monthly Revenue:</strong> Total sales revenue (price × units sold). Projected revenue accounts for expected demand changes.</span>
                     </li>
                     <li className="flex items-start gap-2">
                       <span className="text-muted-foreground mt-0.5">•</span>
-                      <span><strong>Current Price:</strong> Your existing price for comparison purposes.</span>
+                      <span><strong>Monthly Demand:</strong> Expected units sold based on price elasticity. Lower prices typically increase demand.</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="text-muted-foreground mt-0.5">•</span>
+                      <span><strong>Monthly Profit:</strong> Revenue minus costs. Our algorithm optimizes for maximum profit, not just revenue.</span>
                     </li>
                   </ul>
                 </div>

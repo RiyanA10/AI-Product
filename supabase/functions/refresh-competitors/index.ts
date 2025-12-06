@@ -15,6 +15,13 @@ const corsHeaders = {
 const MARKETPLACE_TIMEOUT = 25000; // 25 seconds per marketplace (reduced from 40s)
 
 // ========================================
+// CACHE CONFIGURATION
+// ========================================
+const CACHE_THRESHOLD = 10; // If we have >= 10 cached products, use Google-only for gap-fill
+const CACHE_MAX_AGE_DAYS = 15; // Only use cache from last 15 days
+const CACHE_MIN_SIMILARITY = 0.80; // Product name similarity threshold for cache matching
+
+// ========================================
 // SMART QUERY CONSTRUCTION (NOISE FILTERING)
 // ========================================
 
@@ -2081,7 +2088,65 @@ serve(async (req) => {
     const coreProductName = extractCoreProductName(baseline.product_name);
     console.log(`   Core name: "${coreProductName}"`);
 
-    // Delete existing data for this baseline
+    // ========================================
+    // STEP 1: CHECK CACHE FOR SIMILAR PRODUCTS
+    // ========================================
+    console.log(`\n📦 Checking cache for similar products...`);
+    console.log(`   Cache settings: ${CACHE_MAX_AGE_DAYS} days, ${(CACHE_MIN_SIMILARITY * 100).toFixed(0)}% similarity, threshold ${CACHE_THRESHOLD} items`);
+    
+    let cachedProducts: any[] = [];
+    let cacheSourceBaselineId: string | null = null;
+    
+    try {
+      // Find recent baselines with similar product names (last 15 days)
+      const cacheAgeDate = new Date();
+      cacheAgeDate.setDate(cacheAgeDate.getDate() - CACHE_MAX_AGE_DAYS);
+      
+      const { data: recentBaselines, error: baselinesError } = await supabase
+        .from('product_baselines')
+        .select('id, product_name, created_at')
+        .eq('merchant_id', user.id)
+        .neq('id', baseline_id) // Exclude current baseline
+        .is('deleted_at', null)
+        .gte('created_at', cacheAgeDate.toISOString())
+        .order('created_at', { ascending: false });
+      
+      if (!baselinesError && recentBaselines && recentBaselines.length > 0) {
+        // Find the most similar baseline
+        const normalizedCurrentName = normalizeProductName(baseline.product_name);
+        
+        for (const recentBaseline of recentBaselines) {
+          const normalizedRecentName = normalizeProductName(recentBaseline.product_name);
+          const similarity = calculateSimilarity(normalizedCurrentName, normalizedRecentName);
+          
+          if (similarity >= CACHE_MIN_SIMILARITY) {
+            console.log(`   ✅ Found similar baseline: "${recentBaseline.product_name.slice(0, 50)}..." (${(similarity * 100).toFixed(0)}% match)`);
+            
+            // Fetch cached competitor products from this baseline
+            const { data: cached, error: cachedError } = await supabase
+              .from('competitor_products')
+              .select('*')
+              .eq('baseline_id', recentBaseline.id);
+            
+            if (!cachedError && cached && cached.length > 0) {
+              cachedProducts = cached;
+              cacheSourceBaselineId = recentBaseline.id;
+              console.log(`   📦 Loaded ${cachedProducts.length} cached products from baseline ${recentBaseline.id.slice(0, 8)}...`);
+              break; // Use first matching baseline
+            }
+          }
+        }
+      }
+      
+      if (cachedProducts.length === 0) {
+        console.log(`   ℹ️ No suitable cache found`);
+      }
+    } catch (cacheError) {
+      console.log(`   ⚠️ Cache check error: ${cacheError}`);
+      // Continue without cache
+    }
+
+    // Delete existing data for this baseline (we'll clone cache + add fresh)
     await supabase
       .from('competitor_prices')
       .delete()
@@ -2092,27 +2157,91 @@ serve(async (req) => {
       .delete()
       .eq('baseline_id', baseline_id);
 
-    // Select marketplaces based on currency
-    const marketplaceKeys = baseline.currency === 'SAR' 
-      ? ['google-shopping', 'amazon', 'noon', 'extra', 'jarir']
-      : ['google-shopping', 'amazon-us', 'walmart', 'ebay', 'target'];
+    // ========================================
+    // STEP 2: CLONE CACHED PRODUCTS TO NEW BASELINE
+    // ========================================
+    let finalProducts: any[] = [];
+    
+    if (cachedProducts.length > 0) {
+      console.log(`\n📋 Cloning ${cachedProducts.length} cached products to new baseline...`);
+      
+      const clonedRows = cachedProducts.map((product, index) => ({
+        baseline_id,
+        merchant_id: baseline.merchant_id,
+        marketplace: product.marketplace,
+        product_name: product.product_name,
+        price: product.price,
+        similarity_score: product.similarity_score,
+        price_ratio: product.price_ratio,
+        product_url: product.product_url,
+        currency: baseline.currency,
+        rank: index + 1,
+        is_cached: true,
+        cached_from_baseline_id: cacheSourceBaselineId
+      }));
+      
+      const { error: cloneError } = await supabase
+        .from('competitor_products')
+        .insert(clonedRows);
+      
+      if (cloneError) {
+        console.error(`   ❌ Clone error: ${cloneError.message}`);
+      } else {
+        finalProducts = [...clonedRows];
+        console.log(`   ✅ Cloned ${clonedRows.length} products successfully`);
+      }
+    }
 
     // ========================================
-    // PARALLEL SCRAPING WITH GOOGLE-FIRST STRATEGY FOR EXTRA/JARIR
+    // STEP 3: DECIDE SCRAPING STRATEGY
     // ========================================
-    console.log(`\n🚀 Starting PARALLEL scraping (${marketplaceKeys.length} marketplaces)...`);
-    console.log(`   Marketplaces: ${marketplaceKeys.join(', ')}`);
-    console.log(`   Timeout per marketplace: ${MARKETPLACE_TIMEOUT / 1000}s`);
-    console.log(`   Using Google-First Discovery for: extra, jarir`);
+    const shouldFullScrape = cachedProducts.length < CACHE_THRESHOLD;
+    const shouldGoogleOnlyScrape = cachedProducts.length >= CACHE_THRESHOLD;
+    
+    console.log(`\n🎯 Scraping Decision:`);
+    console.log(`   Cached products: ${cachedProducts.length}`);
+    console.log(`   Threshold: ${CACHE_THRESHOLD}`);
+    
+    if (shouldFullScrape) {
+      console.log(`   Strategy: FULL SCRAPING (need more data)`);
+    } else {
+      console.log(`   Strategy: GOOGLE-ONLY GAP-FILL (have enough cached data)`);
+    }
+
+    // Select marketplaces based on currency and strategy
+    let marketplaceKeys: string[];
+    if (shouldGoogleOnlyScrape) {
+      // Google-only for gap-fill when we have enough cached products
+      marketplaceKeys = ['google-shopping'];
+      console.log(`   Marketplaces: google-shopping only`);
+    } else {
+      // Full scraping when cache is insufficient
+      marketplaceKeys = baseline.currency === 'SAR' 
+        ? ['google-shopping', 'amazon', 'noon', 'extra', 'jarir']
+        : ['google-shopping', 'amazon-us', 'walmart', 'ebay', 'target'];
+      console.log(`   Marketplaces: ${marketplaceKeys.join(', ')}`);
+    }
     
     // Simplified product name for Google-First discovery
     const simplifiedProductName = simplifyTitle(baseline.product_name);
     
-    // Fire all scrapers in parallel - each with its own try/catch
-    const scrapeResults = await Promise.all(
-      marketplaceKeys.map(async (marketplaceKey) => {
-        const config = MARKETPLACE_CONFIGS[marketplaceKey];
-        const startTime = Date.now();
+    // ========================================
+    // STEP 4: FAULT-TOLERANT PARALLEL SCRAPING
+    // ========================================
+    console.log(`\n🚀 Starting ${shouldGoogleOnlyScrape ? 'GOOGLE-ONLY' : 'PARALLEL'} scraping (${marketplaceKeys.length} marketplace${marketplaceKeys.length > 1 ? 's' : ''})...`);
+    console.log(`   Timeout per marketplace: ${MARKETPLACE_TIMEOUT / 1000}s`);
+    if (!shouldGoogleOnlyScrape) {
+      console.log(`   Using Google-First Discovery for: extra, jarir`);
+    }
+    
+    let scrapeResults: ScrapeResult[] = [];
+    
+    try {
+      // Fire all scrapers in parallel - wrapped in fault-tolerant try/catch
+      scrapeResults = await Promise.all(
+        marketplaceKeys.map(async (marketplaceKey) => {
+          const config = MARKETPLACE_CONFIGS[marketplaceKey];
+          const startTime = Date.now();
         
         // Each scraper wrapped in try/catch - one failure won't stop others
         try {
@@ -2204,15 +2333,21 @@ serve(async (req) => {
         }
       })
     );
+    } catch (scrapingError: any) {
+      // Fault-tolerant: If entire scraping fails, continue with cached data
+      console.log(`⚠️ Scraping block failed: ${scrapingError.message}`);
+      console.log(`   Continuing with ${cachedProducts.length} cached products...`);
+      scrapeResults = [];
+    }
 
     // Summary
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`📊 PARALLEL SCRAPING SUMMARY`);
+    console.log(`📊 SCRAPING SUMMARY`);
     console.log(`${'='.repeat(60)}`);
     
     const results: any[] = [];
     const failedMarketplaces: string[] = [];
-    let foundValidProducts = false;
+    let foundValidProducts = cachedProducts.length > 0; // Already have cached products
     
     for (let i = 0; i < scrapeResults.length; i++) {
       const result = scrapeResults[i];
@@ -2237,7 +2372,9 @@ serve(async (req) => {
           price_ratio: product.priceRatio,
           product_url: product.url,
           currency: baseline.currency,
-          rank: index + 1
+          rank: index + 1,
+          is_cached: false, // Fresh scrape
+          cached_from_baseline_id: null
         }));
         
         const { error: productsError } = await supabase
@@ -2389,7 +2526,9 @@ serve(async (req) => {
             price_ratio: product.priceRatio,
             product_url: product.url,
             currency: baseline.currency,
-            rank: index + 1
+            rank: index + 1,
+            is_cached: false, // Fresh scrape from Google fallback
+            cached_from_baseline_id: null
           }));
           
           await supabase.from('competitor_products').insert(productRows);
@@ -2453,8 +2592,26 @@ serve(async (req) => {
       }
     }
 
+    // Final summary with caching info
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`📊 FINAL SUMMARY`);
+    console.log(`${'='.repeat(60)}`);
+    console.log(`   Cached products used: ${cachedProducts.length}`);
+    console.log(`   Fresh products scraped: ${scrapeResults.reduce((sum, r) => sum + r.products.length, 0)}`);
+    console.log(`   Scraping strategy: ${shouldGoogleOnlyScrape ? 'Google-only gap-fill' : 'Full scraping'}`);
+    console.log(`${'='.repeat(60)}`);
+
     return new Response(
-      JSON.stringify({ success: true, baseline_id, results }),
+      JSON.stringify({ 
+        success: true, 
+        baseline_id, 
+        results,
+        cache_info: {
+          cached_products_used: cachedProducts.length,
+          cache_source_baseline_id: cacheSourceBaselineId,
+          scraping_strategy: shouldGoogleOnlyScrape ? 'google-only' : 'full'
+        }
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

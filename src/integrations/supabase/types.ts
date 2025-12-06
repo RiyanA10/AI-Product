@@ -144,9 +144,11 @@ export type Database = {
       competitor_products: {
         Row: {
           baseline_id: string
+          cached_from_baseline_id: string | null
           created_at: string | null
           currency: string
           id: string
+          is_cached: boolean | null
           marketplace: string
           merchant_id: string
           price: number
@@ -158,9 +160,11 @@ export type Database = {
         }
         Insert: {
           baseline_id: string
+          cached_from_baseline_id?: string | null
           created_at?: string | null
           currency: string
           id?: string
+          is_cached?: boolean | null
           marketplace: string
           merchant_id: string
           price: number
@@ -172,9 +176,11 @@ export type Database = {
         }
         Update: {
           baseline_id?: string
+          cached_from_baseline_id?: string | null
           created_at?: string | null
           currency?: string
           id?: string
+          is_cached?: boolean | null
           marketplace?: string
           merchant_id?: string
           price?: number
@@ -184,7 +190,15 @@ export type Database = {
           rank?: number
           similarity_score?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "competitor_products_cached_from_baseline_id_fkey"
+            columns: ["cached_from_baseline_id"]
+            isOneToOne: false
+            referencedRelation: "product_baselines"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       email_verifications: {
         Row: {
