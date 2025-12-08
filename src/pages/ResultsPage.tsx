@@ -81,7 +81,7 @@ export default function ResultsPage() {
 
       if (resultsError) throw resultsError;
 
-      // Get competitor data
+      // Get competitor aggregated data
       const { data: competitors, error: compError } = await supabase
         .from('competitor_prices')
         .select('*')
@@ -89,7 +89,17 @@ export default function ResultsPage() {
 
       if (compError) throw compError;
 
-      setData({ baseline, results, competitors });
+      // Get individual competitor products
+      const { data: competitorProducts, error: prodError } = await supabase
+        .from('competitor_products')
+        .select('*')
+        .eq('baseline_id', baselineId)
+        .order('marketplace', { ascending: true })
+        .order('price', { ascending: true });
+
+      if (prodError) console.error('Failed to load competitor products:', prodError);
+
+      setData({ baseline, results, competitors, competitorProducts: competitorProducts || [] });
     } catch (error) {
       console.error('Failed to load results:', error);
       toast({
@@ -158,9 +168,9 @@ Price Change,${(((results.suggested_price - baseline.current_price) / baseline.c
 
 REVENUE & DEMAND ANALYSIS
 Current Monthly Revenue,${baseline.current_price * baseline.current_quantity}
-Projected Monthly Revenue,${results.suggested_price * baseline.current_quantity}
+Projected Monthly Revenue,${results.expected_revenue || (results.suggested_price * (results.expected_quantity || baseline.current_quantity))}
 Current Monthly Demand,${baseline.current_quantity}
-Projected Monthly Demand,${Math.round(baseline.current_quantity * (1 + Math.abs(results.calibrated_elasticity) * (((results.suggested_price - baseline.current_price) / baseline.current_price) * 100) / 100))}
+Projected Monthly Demand,${results.expected_quantity || baseline.current_quantity}
 
 PROFIT ANALYSIS
 Current Monthly Profit,${(baseline.current_price - baseline.cost_per_unit) * baseline.current_quantity}
@@ -217,7 +227,17 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
     );
   }
 
-  const { baseline, results, competitors } = data;
+  const { baseline, results, competitors, competitorProducts } = data;
+  
+  // Group competitor products by marketplace
+  const productsByMarketplace: Record<string, any[]> = {};
+  (competitorProducts || []).forEach((product: any) => {
+    const key = product.marketplace?.toLowerCase() || 'unknown';
+    if (!productsByMarketplace[key]) {
+      productsByMarketplace[key] = [];
+    }
+    productsByMarketplace[key].push(product);
+  });
   
   // Handle case when pricing results haven't been generated yet
   if (!results) {
@@ -392,7 +412,7 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Projected Monthly Revenue:</span>
                 <span className={`text-base font-semibold ${isProfitIncrease ? 'text-success' : 'text-foreground'}`}>
-                  {formatPrice(results.suggested_price * baseline.current_quantity * (1 + Math.abs(results.calibrated_elasticity) * (priceChange / 100) * (priceChange < 0 ? 1 : -1)), baseline.currency)}
+                  {formatPrice(results.expected_revenue || (results.suggested_price * (results.expected_quantity || baseline.current_quantity)), baseline.currency)}
                 </span>
               </div>
               
@@ -407,10 +427,10 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
               <div className="flex justify-between items-center pb-3 border-b">
                 <span className="text-sm font-medium text-muted-foreground">Projected Monthly Demand:</span>
                 <span className={`text-base font-semibold ${priceChange < 0 ? 'text-success' : priceChange > 0 ? 'text-destructive' : 'text-foreground'}`}>
-                  {formatNumber(baseline.current_quantity * (1 + Math.abs(results.calibrated_elasticity) * (priceChange / 100) * (priceChange < 0 ? 1 : -1)), 0)} units
-                  {priceChange !== 0 && (
+                  {formatNumber(results.expected_quantity || baseline.current_quantity, 0)} units
+                  {priceChange !== 0 && results.expected_quantity && (
                     <span className="text-xs ml-1">
-                      ({priceChange < 0 ? '+' : ''}{formatNumber(Math.abs(results.calibrated_elasticity) * Math.abs(priceChange) * (priceChange < 0 ? 1 : -1), 1)}%)
+                      ({((results.expected_quantity - baseline.current_quantity) / baseline.current_quantity * 100) > 0 ? '+' : ''}{formatNumber((results.expected_quantity - baseline.current_quantity) / baseline.current_quantity * 100, 1)}%)
                     </span>
                   )}
                 </span>
@@ -640,42 +660,86 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
               </h2>
               
               <div className="space-y-4">
-                {competitors.map((comp: any) => (
-                <div key={comp.id} className="p-5 border-2 rounded-lg bg-gradient-card hover:border-primary/30 transition-all">
-                  <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-bold text-lg uppercase text-foreground">{comp.marketplace}</h3>
-                      {comp.fetch_status === 'success' ? (
-                        <Badge variant="default" className="px-2 py-0.5 text-xs">✓ {comp.products_found} products</Badge>
-                      ) : comp.fetch_status === 'no_data' ? (
-                        <Badge variant="secondary" className="px-2 py-0.5 text-xs">No data</Badge>
-                      ) : (
-                        <Badge variant="destructive" className="px-2 py-0.5 text-xs">Failed</Badge>
-                      )}
-                    </div>
-                    <span className="text-xs font-medium text-muted-foreground">
-                      🕒 {new Date(comp.last_updated).toLocaleTimeString()}
-                    </span>
-                  </div>
+                {competitors.map((comp: any) => {
+                  const marketplaceKey = comp.marketplace?.toLowerCase() || 'unknown';
+                  const marketplaceProducts = productsByMarketplace[marketplaceKey] || [];
+                  const actualProductCount = marketplaceProducts.length;
+                  const lowestFromProducts = actualProductCount > 0 ? Math.min(...marketplaceProducts.map((p: any) => p.price)) : comp.lowest_price;
+                  const highestFromProducts = actualProductCount > 0 ? Math.max(...marketplaceProducts.map((p: any) => p.price)) : comp.highest_price;
                   
-                    {comp.fetch_status === 'success' && (
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        <div className="p-3 bg-white/50 rounded-lg border border-success/20">
-                          <span className="text-xs font-medium text-muted-foreground block mb-0.5">Lowest</span>
-                          <span className="text-xl font-bold text-success">{formatPrice(comp.lowest_price, comp.currency)}</span>
-                        </div>
-                        <div className="p-3 bg-white/50 rounded-lg border border-primary/20">
-                          <span className="text-xs font-medium text-muted-foreground block mb-0.5">Average</span>
-                          <span className="text-xl font-bold text-primary">{formatPrice(comp.average_price, comp.currency)}</span>
-                        </div>
-                        <div className="p-3 bg-white/50 rounded-lg border border-destructive/20">
-                          <span className="text-xs font-medium text-muted-foreground block mb-0.5">Highest</span>
-                          <span className="text-xl font-bold text-destructive">{formatPrice(comp.highest_price, comp.currency)}</span>
-                        </div>
+                  return (
+                  <div key={comp.id} className="p-5 border-2 rounded-lg bg-gradient-card hover:border-primary/30 transition-all">
+                    <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-bold text-lg uppercase text-foreground">{comp.marketplace}</h3>
+                        {comp.fetch_status === 'success' || actualProductCount > 0 ? (
+                          <Badge variant="default" className="px-2 py-0.5 text-xs">✓ {actualProductCount || comp.products_found} products</Badge>
+                        ) : comp.fetch_status === 'no_data' ? (
+                          <Badge variant="secondary" className="px-2 py-0.5 text-xs">No data</Badge>
+                        ) : (
+                          <Badge variant="destructive" className="px-2 py-0.5 text-xs">Failed</Badge>
+                        )}
                       </div>
+                      <span className="text-xs font-medium text-muted-foreground">
+                        🕒 {new Date(comp.last_updated).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    
+                    {(comp.fetch_status === 'success' || actualProductCount > 0) && (
+                      <>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+                          <div className="p-3 bg-background/50 rounded-lg border border-success/20">
+                            <span className="text-xs font-medium text-muted-foreground block mb-0.5">Lowest</span>
+                            <span className="text-xl font-bold text-success">{formatPrice(lowestFromProducts, comp.currency)}</span>
+                          </div>
+                          <div className="p-3 bg-background/50 rounded-lg border border-primary/20">
+                            <span className="text-xs font-medium text-muted-foreground block mb-0.5">Average</span>
+                            <span className="text-xl font-bold text-primary">{formatPrice(comp.average_price, comp.currency)}</span>
+                          </div>
+                          <div className="p-3 bg-background/50 rounded-lg border border-destructive/20">
+                            <span className="text-xs font-medium text-muted-foreground block mb-0.5">Highest</span>
+                            <span className="text-xl font-bold text-destructive">{formatPrice(highestFromProducts, comp.currency)}</span>
+                          </div>
+                        </div>
+                        
+                        {/* Individual Products List */}
+                        {actualProductCount > 0 && (
+                          <div className="mt-3 pt-3 border-t border-border/50">
+                            <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Individual Products:</p>
+                            <div className="space-y-2 max-h-48 overflow-y-auto">
+                              {marketplaceProducts.map((product: any) => (
+                                <div key={product.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-lg text-sm">
+                                  <div className="flex-1 min-w-0 mr-3">
+                                    <p className="font-medium text-foreground truncate">{product.product_name}</p>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                      <Badge variant="outline" className="text-xs px-1.5 py-0">
+                                        {(product.similarity_score * 100).toFixed(0)}% match
+                                      </Badge>
+                                      {product.product_url && (
+                                        <a 
+                                          href={product.product_url} 
+                                          target="_blank" 
+                                          rel="noopener noreferrer"
+                                          className="text-xs text-primary hover:underline"
+                                        >
+                                          View →
+                                        </a>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <span className="text-base font-bold text-primary whitespace-nowrap">
+                                    {formatPrice(product.price, product.currency)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
-                </div>
-                ))}
+                  </div>
+                  );
+                })}
               </div>
             </Card>
           </>

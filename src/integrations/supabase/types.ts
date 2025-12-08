@@ -384,6 +384,8 @@ export type Database = {
           created_at: string | null
           currency: string
           expected_monthly_profit: number | null
+          expected_quantity: number | null
+          expected_revenue: number | null
           has_warning: boolean | null
           id: string
           inflation_adjustment: number
@@ -407,6 +409,8 @@ export type Database = {
           created_at?: string | null
           currency: string
           expected_monthly_profit?: number | null
+          expected_quantity?: number | null
+          expected_revenue?: number | null
           has_warning?: boolean | null
           id?: string
           inflation_adjustment: number
@@ -430,6 +434,8 @@ export type Database = {
           created_at?: string | null
           currency?: string
           expected_monthly_profit?: number | null
+          expected_quantity?: number | null
+          expected_revenue?: number | null
           has_warning?: boolean | null
           id?: string
           inflation_adjustment?: number

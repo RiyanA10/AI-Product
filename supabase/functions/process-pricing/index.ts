@@ -725,7 +725,10 @@ async function calculateOptimalPrice(
   
   const positionVsMarket = ((finalSuggestedPrice - marketStats.average) / marketStats.average) * 100;
 
-  // Insert pricing results
+  // Calculate expected revenue using the correct formula
+  const expectedRevenue = finalSuggestedPrice * finalNewQuantity;
+  
+  // Insert pricing results with expected_quantity and expected_revenue
   await supabase.from('pricing_results').insert({
     baseline_id: baseline.id,
     merchant_id: baseline.merchant_id,
@@ -744,6 +747,8 @@ async function calculateOptimalPrice(
     expected_monthly_profit: finalNewProfit,
     profit_increase_amount: finalProfitIncrease,
     profit_increase_percent: finalProfitIncreasePercent,
+    expected_quantity: Math.round(finalNewQuantity),
+    expected_revenue: expectedRevenue,
     has_warning: hasWarning,
     warning_message: hasWarning ? warningMessage : null
   });
