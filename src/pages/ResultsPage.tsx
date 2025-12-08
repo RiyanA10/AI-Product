@@ -660,7 +660,13 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
               </h2>
               
               <div className="space-y-4">
-                {competitors.map((comp: any) => {
+                {competitors
+                  .filter((comp: any) => {
+                    const marketplaceKey = comp.marketplace?.toLowerCase() || 'unknown';
+                    const marketplaceProducts = productsByMarketplace[marketplaceKey] || [];
+                    return marketplaceProducts.length > 0 || comp.fetch_status === 'success';
+                  })
+                  .map((comp: any) => {
                   const marketplaceKey = comp.marketplace?.toLowerCase() || 'unknown';
                   const marketplaceProducts = productsByMarketplace[marketplaceKey] || [];
                   const actualProductCount = marketplaceProducts.length;
@@ -702,39 +708,6 @@ Position vs Market,${results.position_vs_market ? results.position_vs_market.toF
                           </div>
                         </div>
                         
-                        {/* Individual Products List */}
-                        {actualProductCount > 0 && (
-                          <div className="mt-3 pt-3 border-t border-border/50">
-                            <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Individual Products:</p>
-                            <div className="space-y-2 max-h-48 overflow-y-auto">
-                              {marketplaceProducts.map((product: any) => (
-                                <div key={product.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-lg text-sm">
-                                  <div className="flex-1 min-w-0 mr-3">
-                                    <p className="font-medium text-foreground truncate">{product.product_name}</p>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                      <Badge variant="outline" className="text-xs px-1.5 py-0">
-                                        {(product.similarity_score * 100).toFixed(0)}% match
-                                      </Badge>
-                                      {product.product_url && (
-                                        <a 
-                                          href={product.product_url} 
-                                          target="_blank" 
-                                          rel="noopener noreferrer"
-                                          className="text-xs text-primary hover:underline"
-                                        >
-                                          View →
-                                        </a>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <span className="text-base font-bold text-primary whitespace-nowrap">
-                                    {formatPrice(product.price, product.currency)}
-                                  </span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                       </>
                     )}
                   </div>

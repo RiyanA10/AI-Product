@@ -1287,7 +1287,7 @@ async function scrapeGoogleSERP(
     }
     
     console.log(`✓ Extracted ${products.length} products from Google SERP`);
-    return products.sort((a, b) => b.similarity - a.similarity).slice(0, 20);
+    return products.sort((a, b) => b.similarity - a.similarity).slice(0, 30);
     
   } catch (error: any) {
     console.error(`❌ Google SERP error:`, error.message);
@@ -1604,7 +1604,7 @@ async function scrapeGoogleShopping(
       console.log(`   💰 Price range: ${Math.min(...products.map(p => p.price))} - ${Math.max(...products.map(p => p.price))} ${currency}`);
     }
     
-    return products.sort((a, b) => b.similarity - a.similarity).slice(0, 25);
+    return products.sort((a, b) => b.similarity - a.similarity).slice(0, 35);
     
   } catch (error: any) {
     console.error(`❌ Google Shopping error:`, error.message);
@@ -1868,7 +1868,7 @@ async function scrapeMarketplacePrices(
   
   return allProducts
     .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, 20);
+    .slice(0, 30);
 }
 
 // ========================================
