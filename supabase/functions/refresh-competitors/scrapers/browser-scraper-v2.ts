@@ -202,31 +202,12 @@ export class BrowserScraperV2 implements ScraperTransport {
         console.log(`[Browser V2] ⚠️ Using cached HTML`);
       }
 
-      let resourceUrls: string[] = [];
-      try {
-        resourceUrls = await page.evaluate(() =>
-          performance
-            .getEntriesByType('resource')
-            .map((entry) => entry.name)
-            .filter((name) => /jarir|catalog|search|product|graphql|api/i.test(name))
-            .slice(-200)
-        );
-      } catch (_e) {
-        // Ignore performance entry extraction failures
-      }
-
       if (apiPayloads.length > 0) {
         const uniquePayloads = [...new Map(apiPayloads.map((item) => [`${item.url}::${item.payload.length}`, item])).values()].slice(0, 40);
         const payloadScript = `<script type="application/json" id="__SCRAPER_API_PAYLOADS__">${JSON.stringify(uniquePayloads)}</script>`;
         const endpointScript = `<script type="application/json" id="__SCRAPER_API_ENDPOINTS__">${JSON.stringify(uniquePayloads.map((item) => item.url))}</script>`;
         html += payloadScript + endpointScript;
         console.log(`[Browser V2] ✅ Appended ${uniquePayloads.length} API payload(s) to HTML`);
-      }
-
-      if (resourceUrls.length > 0) {
-        const resourceScript = `<script type="application/json" id="__SCRAPER_RESOURCE_URLS__">${JSON.stringify(resourceUrls)}</script>`;
-        html += resourceScript;
-        console.log(`[Browser V2] ✅ Appended ${resourceUrls.length} resource URL(s)`);
       }
       
       await browser.close();
