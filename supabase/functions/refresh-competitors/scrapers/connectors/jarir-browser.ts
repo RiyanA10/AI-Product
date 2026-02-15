@@ -56,6 +56,13 @@ export class JarirBrowserConnector implements MarketplaceConnector {
         }
       }
       
+      // Extract from embedded API payloads captured at browser network layer
+      if (products.length === 0) {
+        const apiProducts = PriceExtractor.extractFromEmbeddedApiPayloads(html, 'Jarir');
+        products.push(...apiProducts);
+        console.log(`[Jarir Browser] ✅ Found ${apiProducts.length} from API payloads`);
+      }
+
       // Extract from search results HTML
       if (products.length === 0) {
         const searchResults = this.extractFromSearchResults(html);
