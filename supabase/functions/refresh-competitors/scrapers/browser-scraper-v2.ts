@@ -1,0 +1,173 @@
+/**
+ * BROWSER SCRAPER V2 - Maximum Stealth
+ */
+// @ts-nocheck
+import { ScraperTransport, ScraperOptions, ScraperError } from './types.ts';
+import puppeteer from "npm:puppeteer@24.15.0";
+
+export class BrowserScraperV2 implements ScraperTransport {
+  
+  async fetch(url: string, options?: ScraperOptions): Promise<string> {
+    const startTime = Date.now();
+    let browser;
+    
+    try {
+      console.log(`[Browser V2] Launching browser for: ${url}`);
+      
+      // Launch with maximum stealth
+      browser = await puppeteer.launch({
+        headless: false,
+        executablePath: '/Users/riyan/.cache/puppeteer/chrome/mac_arm-145.0.7632.67/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+        args: [
+          '--no-sandbox',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-infobars',
+          '--window-size=1920,1080',
+          '--start-maximized',
+        ],
+      });
+      
+      const page = await browser.newPage();
+      
+      await page.setViewport({ width: 1920, height: 1080 });
+      
+      await page.setUserAgent(
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      );
+      
+      await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'plugins', {
+          get: () => [1, 2, 3, 4, 5],
+        });
+        
+        Object.defineProperty(navigator, 'languages', {
+          get: () => ['en-US', 'en', 'ar'],
+        });
+        
+        Object.defineProperty(navigator, 'webdriver', {
+          get: () => false,
+        });
+        
+        // @ts-ignore
+        window.chrome = { runtime: {} };
+        
+        // Permissions
+        const originalQuery = window.navigator.permissions.query;
+        // @ts-ignore
+        window.navigator.permissions.query = (parameters: any) => (
+          parameters.name === 'notifications' ?
+            // @ts-ignore
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+        );
+      });
+      
+      console.log(`[Browser V2] Navigating...`);
+      
+      const timeout = options?.timeout || 20000;
+      let html = '';
+      
+      page.on('response', async (response) => {
+        try {
+          const respUrl = response.url();
+          
+          if (respUrl.includes('jarir.com') && html === '') {
+            const contentType = response.headers()['content-type'] || '';
+            
+            if (contentType.includes('text/html')) {
+              const text = await response.text();
+              if (text && text.length > 1000) {
+                html = text;
+                console.log(`[Browser V2] 🎯 Captured HTML from response! (${html.length} chars)`);
+              }
+            }
+          }
+        } catch (e) {
+          // Silently ignore
+        }
+      });
+      
+      try {
+        await page.goto(url, {
+          waitUntil: 'domcontentloaded',
+          timeout: timeout,
+        });
+        console.log(`[Browser V2] ✅ Navigation succeeded!`);
+      } catch (navError) {
+        console.log(`[Browser V2] ⚠️ Navigation error:`, 
+          navError instanceof Error ? navError.message : navError);
+      }
+      
+      // WAIT FOR PRODUCT DATA TO LOAD
+      console.log(`[Browser V2] Waiting for JavaScript to populate product data...`);
+      
+      let attempts = 0;
+      let hasProductData = false;
+      
+      while (attempts < 15 && !hasProductData) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+        
+        try {
+          hasProductData = await page.evaluate(() => {
+            const state = (window as any).__INITIAL_STATE__;
+            return state?.product?.current && Object.keys(state.product.current).length > 0;
+          });
+          
+          if (hasProductData) {
+            console.log(`[Browser V2] ✅ Product data loaded after ${attempts} seconds!`);
+            break;
+          }
+        } catch (e) {
+          // Continue waiting
+        }
+      }
+      
+      if (!hasProductData) {
+        console.log(`[Browser V2] ⚠️ Product data didn't load within 15 seconds`);
+      }
+      
+      // Get fresh HTML with loaded data
+      console.log(`[Browser V2] Getting final HTML...`);
+      
+      // Wait extra time for any remaining JS
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // FORCE getting fresh DOM (not cached response)
+      try {
+        const freshHtml = await page.evaluate(() => document.documentElement.outerHTML);
+        
+        if (freshHtml && freshHtml.length > html.length) {
+          html = freshHtml;
+          console.log(`[Browser V2] ✅ Got FRESH HTML with JS updates (${html.length} chars)`);
+        } else {
+          console.log(`[Browser V2] ✅ Using response HTML (${html.length} chars)`);
+        }
+      } catch (e) {
+        console.log(`[Browser V2] ⚠️ Using cached HTML`);
+      }
+      
+      await browser.close();
+      
+      const duration = Date.now() - startTime;
+      console.log(`[Browser V2] ✅ Success (${duration}ms) - ${html.length} chars`);
+      
+      return html;
+      
+    } catch (error) {
+      if (browser) {
+        await browser.close().catch(() => {});
+      }
+      
+      const duration = Date.now() - startTime;
+      console.error(`[Browser V2] ❌ Error after ${duration}ms:`, error);
+      
+      throw new ScraperError(
+        error instanceof Error ? error.message : 'Unknown error',
+        'UNKNOWN',
+        undefined,
+        error instanceof Error ? error : undefined
+      );
+    }
+  }
+}
