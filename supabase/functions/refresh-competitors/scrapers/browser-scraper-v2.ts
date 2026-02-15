@@ -89,9 +89,15 @@ export class BrowserScraperV2 implements ScraperTransport {
             }
           }
           
-          const responseHost = new URL(respUrl).host;
+          let responseHost = '';
+          try {
+            responseHost = new URL(respUrl).host;
+          } catch {
+            responseHost = '';
+          }
+
           const sameTargetHost = responseHost === targetHost;
-          const isJarirFamilyHost = targetHost.includes('jarir.com') && responseHost.includes('jarir.com');
+          const isJarirFamilyHost = targetHost.includes('jarir.com') && respUrl.includes('jarir.com');
 
           if ((sameTargetHost || isJarirFamilyHost) && html === '') {
             if (contentType.includes('text/html')) {
