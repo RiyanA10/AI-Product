@@ -282,69 +282,6 @@ export class PriceExtractor {
   }
   
 
-
-
-  private static decodeEmbeddedJson(raw: string): string {
-    const trimmed = raw.trim();
-
-    // Backward compatibility for plain JSON payloads.
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      return trimmed;
-    }
-
-    try {
-      return decodeURIComponent(escape(atob(trimmed)));
-    } catch {
-      return trimmed;
-    }
-  }
-
-  /**
-   * Extract products captured directly from live DOM by BrowserScraperV2.
-   */
-  static extractFromEmbeddedDomProducts(html: string, marketplace: string): ScrapedProduct[] {
-    try {
-      const domMatch = html.match(/<script[^>]*id=["']__SCRAPER_DOM_PRODUCTS__["'][^>]*>([\s\S]*?)<\/script>/i);
-      if (!domMatch?.[1]) {
-        return [];
-      }
-
-      const rawItems = JSON.parse(this.decodeEmbeddedJson(domMatch[1])) as Array<{ name?: string; price?: number; url?: string }>;
-      const products: ScrapedProduct[] = [];
-
-      for (const item of rawItems.slice(0, 80)) {
-        const name = (item.name || '').trim();
-        const price = Number(item.price);
-
-        if (!name || name.length < 4 || !isFinite(price) || price <= 0) {
-          continue;
-        }
-
-        products.push({
-          name,
-          price,
-          currency: 'SAR',
-          url: item.url,
-          marketplace,
-          extractionMethod: 'css-selector',
-        });
-      }
-
-      const dedup = new Map<string, ScrapedProduct>();
-      for (const product of products) {
-        const key = `${product.name.toLowerCase()}::${product.price}`;
-        if (!dedup.has(key)) {
-          dedup.set(key, product);
-        }
-      }
-
-      return [...dedup.values()];
-    } catch (error) {
-      console.error('[Price Extractor] Error parsing embedded DOM products:', error);
-      return [];
-    }
-  }
-
   /**
    * Extract product candidates from API payloads embedded by BrowserScraperV2.
    * BrowserScraperV2 appends JSON responses in #__SCRAPER_API_PAYLOADS__.
@@ -358,7 +295,7 @@ export class PriceExtractor {
         return products;
       }
 
-      const payloadItems = JSON.parse(this.decodeEmbeddedJson(payloadMatch[1])) as Array<string | { url?: string; payload?: string }>;
+      const payloadItems = JSON.parse(payloadMatch[1]) as Array<string | { url?: string; payload?: string }>;
 
       for (const item of payloadItems.slice(0, 40)) {
         const payload = typeof item === 'string' ? item : item?.payload;

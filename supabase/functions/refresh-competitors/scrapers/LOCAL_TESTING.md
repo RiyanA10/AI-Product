@@ -27,25 +27,3 @@ SCRAPER_USE_HTTP=true deno run -A run-end-to-end.ts "iphone 15"
 ```
 
 The runner writes `scraper-e2e-result.json` with structured output.
-
-
-## 6) Try Google Shopping connector (recommended fallback)
-```bash
-SCRAPER_MARKETPLACE=google deno run -A run-end-to-end.ts "iphone 15"
-```
-
-## 7) Try Google Shopping with HTTP transport
-```bash
-SCRAPER_MARKETPLACE=google SCRAPER_USE_HTTP=true deno run -A run-end-to-end.ts "iphone 15"
-```
-
-
-Tip: verify marketplace env before running:
-```bash
-echo $SCRAPER_MARKETPLACE
-```
-
-Alternative (argument override):
-```bash
-deno run -A run-end-to-end.ts --marketplace google "iphone 15"
-```
