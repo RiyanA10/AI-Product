@@ -11,4 +11,4 @@ const html = await scraper.fetch(
 
 await Deno.writeTextFile('extra-product-page.html', html);
 
-console.log(`✅ Saved extra-product-page.html (${html.length} chars)`);v
+console.log(`✅ Saved extra-product-page.html (${html.length} chars)`);

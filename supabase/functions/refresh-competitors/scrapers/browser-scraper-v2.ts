@@ -67,6 +67,7 @@ export class BrowserScraperV2 implements ScraperTransport {
       console.log(`[Browser V2] Navigating...`);
       
       const timeout = options?.timeout || 20000;
+      const targetHost = new URL(url).host;
       let html = '';
       const apiPayloads: string[] = [];
       
@@ -88,7 +89,17 @@ export class BrowserScraperV2 implements ScraperTransport {
             }
           }
           
-          if (respUrl.includes('jarir.com') && html === '') {
+          let responseHost = '';
+          try {
+            responseHost = new URL(respUrl).host;
+          } catch {
+            responseHost = '';
+          }
+
+          const sameTargetHost = responseHost === targetHost;
+          const isJarirFamilyHost = targetHost.includes('jarir.com') && respUrl.includes('jarir.com');
+
+          if ((sameTargetHost || isJarirFamilyHost) && html === '') {
             if (contentType.includes('text/html')) {
               const text = await response.text();
               if (text && text.length > 1000) {
@@ -113,6 +124,15 @@ export class BrowserScraperV2 implements ScraperTransport {
           navError instanceof Error ? navError.message : navError);
       }
       
+      if (options?.waitForSelector) {
+        try {
+          await page.waitForSelector(options.waitForSelector, { timeout: Math.min(timeout, 10000) });
+          console.log(`[Browser V2] ✅ waitForSelector matched: ${options.waitForSelector}`);
+        } catch (_e) {
+          console.log(`[Browser V2] ⚠️ waitForSelector timed out: ${options.waitForSelector}`);
+        }
+      }
+
       // WAIT FOR PRODUCT DATA TO LOAD
       console.log(`[Browser V2] Waiting for JavaScript to populate product data...`);
       
@@ -146,7 +166,8 @@ export class BrowserScraperV2 implements ScraperTransport {
       console.log(`[Browser V2] Getting final HTML...`);
       
       // Wait extra time for any remaining JS
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      const additionalWait = options?.additionalWait ?? 3000;
+      await new Promise(resolve => setTimeout(resolve, additionalWait));
       
       // FORCE getting fresh DOM (not cached response)
       try {
