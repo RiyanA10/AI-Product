@@ -32,8 +32,8 @@ export class JarirBrowserConnector implements MarketplaceConnector {
       // Fetch with browser (wait for products to load)
       const html = await this.scraper.fetch(url, {
         timeout: 30000,
-        waitForSelector: '.product-item, .product-price',
-        additionalWait: 3000,  // Extra wait for dynamic content
+        waitForSelector: '.product-item, .product-item-info, [data-price-amount], [class*=price], [class*=product]',
+        additionalWait: 8000,  // Extra wait for dynamic content
       });
       
       console.log(`[Jarir Browser] Got HTML (${html.length} chars), extracting...`);
@@ -63,6 +63,13 @@ export class JarirBrowserConnector implements MarketplaceConnector {
         console.log(`[Jarir Browser] ✅ Found ${apiProducts.length} from API payloads`);
       }
 
+      // Extract from product JSON attributes / script state in HTML
+      if (products.length === 0) {
+        const stateProducts = this.extractFromProductJsonAttributes(html);
+        products.push(...stateProducts);
+        console.log(`[Jarir Browser] ✅ Found ${stateProducts.length} from HTML JSON blocks`);
+      }
+
       // Extract from search results HTML
       if (products.length === 0) {
         const searchResults = this.extractFromSearchResults(html);
@@ -89,6 +96,45 @@ export class JarirBrowserConnector implements MarketplaceConnector {
     }
   }
   
+
+  /**
+   * Extract product cards from embedded JSON snippets in HTML attributes/scripts.
+   */
+  private extractFromProductJsonAttributes(html: string): ScrapedProduct[] {
+    const products: ScrapedProduct[] = [];
+
+    try {
+      const jsonCandidatePattern = /("name"\s*:\s*"[^"]{3,}"[\s\S]{0,240}?"(?:price|final_price|special_price|regular_price)"\s*:\s*"?\d[\d,.]*)/gi;
+      const matches = [...html.matchAll(jsonCandidatePattern)];
+
+      for (const match of matches.slice(0, 30)) {
+        const snippet = `{${match[1]}}`;
+        try {
+          const data = JSON.parse(snippet);
+          const name = String(data.name || '').trim();
+          const priceRaw = data.price ?? data.final_price ?? data.special_price ?? data.regular_price;
+          const price = parseFloat(String(priceRaw).replace(/[^0-9.]/g, ''));
+
+          if (name.length > 3 && !isNaN(price) && price > 0) {
+            products.push({
+              name,
+              price,
+              currency: 'SAR',
+              marketplace: 'Jarir',
+              extractionMethod: 'api',
+            });
+          }
+        } catch {
+          // Ignore malformed snippets
+        }
+      }
+    } catch (error) {
+      console.error('[Jarir Browser] Error extracting HTML JSON blocks:', error);
+    }
+
+    return products;
+  }
+
   /**
    * Extract products from search results page
    */

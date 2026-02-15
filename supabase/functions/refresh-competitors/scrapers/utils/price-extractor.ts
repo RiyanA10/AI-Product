@@ -295,14 +295,34 @@ export class PriceExtractor {
         return products;
       }
 
-      const payloadItems = JSON.parse(payloadMatch[1]) as string[];
+      const payloadItems = JSON.parse(payloadMatch[1]) as Array<string | { url?: string; payload?: string }>;
 
-      for (const payload of payloadItems.slice(0, 20)) {
+      for (const item of payloadItems.slice(0, 40)) {
+        const payload = typeof item === 'string' ? item : item?.payload;
+        if (!payload || payload.length < 2) {
+          continue;
+        }
+
         try {
           const data = JSON.parse(payload);
           this.collectProductsFromApiObject(data, marketplace, products);
         } catch {
           // Ignore payloads that are not valid JSON.
+        }
+      }
+
+      // Fallback: inspect JSON script blocks directly in HTML (e.g., app state blobs).
+      const scriptJsonBlocks = html.match(/<script[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi) || [];
+      for (const block of scriptJsonBlocks.slice(0, 30)) {
+        try {
+          const jsonText = block.replace(/<script[^>]*>/i, '').replace(/<\/script>/i, '').trim();
+          if (jsonText.length < 5) {
+            continue;
+          }
+          const data = JSON.parse(jsonText);
+          this.collectProductsFromApiObject(data, marketplace, products);
+        } catch {
+          // Ignore non-JSON script blocks.
         }
       }
 
@@ -339,13 +359,24 @@ export class PriceExtractor {
     }
 
     const record = value as Record<string, unknown>;
-    const nameCandidate = record.name || record.title || record.product_name;
+    const nameCandidate =
+      record.name ||
+      record.title ||
+      record.product_name ||
+      record.productName ||
+      record.display_name ||
+      record.label;
+
     const priceCandidate =
       record.price ??
       record.final_price ??
       record.special_price ??
       record.sale_price ??
-      record.amount;
+      record.regular_price ??
+      record.min_price ??
+      record.max_price ??
+      record.amount ??
+      record.value;
 
     if (typeof nameCandidate === 'string' && nameCandidate.trim().length > 2 && priceCandidate !== undefined) {
       const numericPrice = parseFloat(String(priceCandidate).replace(/[^0-9.]/g, ''));

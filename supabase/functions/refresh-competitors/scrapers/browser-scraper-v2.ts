@@ -68,24 +68,26 @@ export class BrowserScraperV2 implements ScraperTransport {
       
       const timeout = options?.timeout || 20000;
       const targetHost = new URL(url).host;
+      const apiSignalPattern = /(\"price\"|\"final_price\"|\"special_price\"|\"product\"|\"products\"|\"items\"|\"hits\"|\"sku\")/i;
+      const apiUrlPattern = /(search|products|product|catalog|graphql|query|listing|list|items)/i;
       let html = '';
-      const apiPayloads: string[] = [];
+      const apiPayloads: Array<{ url: string; payload: string }> = [];
       
       page.on('response', async (response) => {
         try {
           const respUrl = response.url();
           const contentType = response.headers()['content-type'] || '';
 
-          if (contentType.includes('application/json')) {
+          if (contentType.includes('json') || apiUrlPattern.test(respUrl)) {
             const payload = await response.text();
 
-            // Keep only payloads that are likely to contain product pricing data.
+            // Keep payloads that look like search/product APIs OR mention pricing keys.
             if (
               payload.length > 30 &&
-              /("price"|"final_price"|"special_price"|"product"|"products")/i.test(payload)
+              (apiSignalPattern.test(payload) || apiUrlPattern.test(respUrl))
             ) {
-              apiPayloads.push(payload);
-              console.log(`[Browser V2] 📦 Captured JSON payload from: ${respUrl}`);
+              apiPayloads.push({ url: respUrl, payload });
+              console.log(`[Browser V2] 📦 Captured API payload from: ${respUrl}`);
             }
           }
           
@@ -124,6 +126,13 @@ export class BrowserScraperV2 implements ScraperTransport {
           navError instanceof Error ? navError.message : navError);
       }
       
+      try {
+        await page.waitForNetworkIdle({ idleTime: 1200, timeout: Math.min(timeout, 12000) });
+        console.log('[Browser V2] ✅ Network became idle');
+      } catch (_e) {
+        console.log('[Browser V2] ⚠️ Network idle wait timed out');
+      }
+
       if (options?.waitForSelector) {
         try {
           await page.waitForSelector(options.waitForSelector, { timeout: Math.min(timeout, 10000) });
@@ -131,6 +140,16 @@ export class BrowserScraperV2 implements ScraperTransport {
         } catch (_e) {
           console.log(`[Browser V2] ⚠️ waitForSelector timed out: ${options.waitForSelector}`);
         }
+      }
+
+      try {
+        await page.evaluate(async () => {
+          window.scrollTo(0, document.body.scrollHeight);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          window.scrollTo(0, 0);
+        });
+      } catch (_e) {
+        // Ignore scroll failures
       }
 
       // WAIT FOR PRODUCT DATA TO LOAD
@@ -184,9 +203,10 @@ export class BrowserScraperV2 implements ScraperTransport {
       }
 
       if (apiPayloads.length > 0) {
-        const uniquePayloads = [...new Set(apiPayloads)].slice(0, 20);
+        const uniquePayloads = [...new Map(apiPayloads.map((item) => [`${item.url}::${item.payload.length}`, item])).values()].slice(0, 40);
         const payloadScript = `<script type="application/json" id="__SCRAPER_API_PAYLOADS__">${JSON.stringify(uniquePayloads)}</script>`;
-        html += payloadScript;
+        const endpointScript = `<script type="application/json" id="__SCRAPER_API_ENDPOINTS__">${JSON.stringify(uniquePayloads.map((item) => item.url))}</script>`;
+        html += payloadScript + endpointScript;
         console.log(`[Browser V2] ✅ Appended ${uniquePayloads.length} API payload(s) to HTML`);
       }
       
