@@ -190,8 +190,8 @@ export class BrowserScraperV2 implements ScraperTransport {
       
       // FORCE getting fresh DOM (not cached response)
       try {
-        const freshHtml = await page.evaluate(() => document.documentElement.outerHTML);
-        
+        const freshHtml = await page.content();
+
         if (freshHtml && freshHtml.length > html.length) {
           html = freshHtml;
           console.log(`[Browser V2] ✅ Got FRESH HTML with JS updates (${html.length} chars)`);
