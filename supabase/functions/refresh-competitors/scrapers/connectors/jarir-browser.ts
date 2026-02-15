@@ -32,7 +32,7 @@ export class JarirBrowserConnector implements MarketplaceConnector {
       // Fetch with browser (wait for products to load)
       const html = await this.scraper.fetch(url, {
         timeout: 30000,
-        waitForSelector: '.product-item, .product-item-info, [data-price-amount], [class*=price], [class*=product], a[href*="/p/"], a[href*="product"]',
+        waitForSelector: '.product-item, .product-item-info, [data-price-amount], [class*=price], [class*=product]',
         additionalWait: 8000,  // Extra wait for dynamic content
       });
       
@@ -56,13 +56,6 @@ export class JarirBrowserConnector implements MarketplaceConnector {
         }
       }
       
-      // Extract directly-captured DOM products embedded by browser scraper
-      if (products.length === 0) {
-        const domProducts = PriceExtractor.extractFromEmbeddedDomProducts(html, 'Jarir');
-        products.push(...domProducts);
-        console.log(`[Jarir Browser] ✅ Found ${domProducts.length} from embedded DOM products`);
-      }
-
       // Extract from embedded API payloads captured at browser network layer
       if (products.length === 0) {
         const apiProducts = PriceExtractor.extractFromEmbeddedApiPayloads(html, 'Jarir');
@@ -75,13 +68,6 @@ export class JarirBrowserConnector implements MarketplaceConnector {
         const stateProducts = this.extractFromProductJsonAttributes(html);
         products.push(...stateProducts);
         console.log(`[Jarir Browser] ✅ Found ${stateProducts.length} from HTML JSON blocks`);
-      }
-
-      // Extract from generic product-link blocks
-      if (products.length === 0) {
-        const blockProducts = this.extractFromGenericProductBlocks(html);
-        products.push(...blockProducts);
-        console.log(`[Jarir Browser] ✅ Found ${blockProducts.length} from generic product blocks`);
       }
 
       // Extract from search results HTML
@@ -144,51 +130,6 @@ export class JarirBrowserConnector implements MarketplaceConnector {
       }
     } catch (error) {
       console.error('[Jarir Browser] Error extracting HTML JSON blocks:', error);
-    }
-
-    return products;
-  }
-
-
-  /**
-   * Extract from generic link + nearby price patterns for JS-heavy pages.
-   */
-  private extractFromGenericProductBlocks(html: string): ScrapedProduct[] {
-    const products: ScrapedProduct[] = [];
-
-    try {
-      const linkPattern = /<a[^>]*href="([^"]*(?:\/p\/|product)[^"]*)"[^>]*>([\s\S]{0,120}?)<\/a>/gi;
-      const linkMatches = [...html.matchAll(linkPattern)].slice(0, 80);
-
-      for (const match of linkMatches) {
-        const url = match[1];
-        const anchorText = match[2].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-
-        const start = Math.max(0, (match.index || 0) - 600);
-        const end = Math.min(html.length, (match.index || 0) + 1200);
-        const neighborhood = html.slice(start, end);
-
-        const priceMatch =
-          neighborhood.match(/data-price-amount="([0-9.,]+)"/i) ||
-          neighborhood.match(/"(?:final_price|special_price|regular_price|price)"\s*:\s*"?([0-9.,]{3,})"?/i) ||
-          neighborhood.match(/([0-9]{3,6}(?:\.[0-9]{1,2})?)\s*(?:SAR|ر\.س|SR)/i);
-
-        const price = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : 0;
-        if (!anchorText || anchorText.length < 4 || !price || Number.isNaN(price)) {
-          continue;
-        }
-
-        products.push({
-          name: anchorText,
-          price,
-          currency: 'SAR',
-          url: url.startsWith('http') ? url : `${this.baseUrl}${url}`,
-          marketplace: 'Jarir',
-          extractionMethod: 'css-selector',
-        });
-      }
-    } catch (error) {
-      console.error('[Jarir Browser] Error extracting generic product blocks:', error);
     }
 
     return products;
