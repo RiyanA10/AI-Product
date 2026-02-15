@@ -14,10 +14,12 @@ export class BrowserScraperV2 implements ScraperTransport {
     try {
       console.log(`[Browser V2] Launching browser for: ${url}`);
       
+      const executablePath = Deno.env.get('PUPPETEER_EXECUTABLE_PATH');
+
       // Launch with maximum stealth
       browser = await puppeteer.launch({
-        headless: false,
-        executablePath: '/Users/riyan/.cache/puppeteer/chrome/mac_arm-145.0.7632.67/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+        headless: Deno.env.get('PUPPETEER_HEADLESS') !== 'false',
+        executablePath: executablePath || undefined,
         args: [
           '--no-sandbox',
           '--disable-blink-features=AutomationControlled',
@@ -66,14 +68,27 @@ export class BrowserScraperV2 implements ScraperTransport {
       
       const timeout = options?.timeout || 20000;
       let html = '';
+      const apiPayloads: string[] = [];
       
       page.on('response', async (response) => {
         try {
           const respUrl = response.url();
+          const contentType = response.headers()['content-type'] || '';
+
+          if (contentType.includes('application/json')) {
+            const payload = await response.text();
+
+            // Keep only payloads that are likely to contain product pricing data.
+            if (
+              payload.length > 30 &&
+              /("price"|"final_price"|"special_price"|"product"|"products")/i.test(payload)
+            ) {
+              apiPayloads.push(payload);
+              console.log(`[Browser V2] 📦 Captured JSON payload from: ${respUrl}`);
+            }
+          }
           
           if (respUrl.includes('jarir.com') && html === '') {
-            const contentType = response.headers()['content-type'] || '';
-            
             if (contentType.includes('text/html')) {
               const text = await response.text();
               if (text && text.length > 1000) {
@@ -145,6 +160,13 @@ export class BrowserScraperV2 implements ScraperTransport {
         }
       } catch (e) {
         console.log(`[Browser V2] ⚠️ Using cached HTML`);
+      }
+
+      if (apiPayloads.length > 0) {
+        const uniquePayloads = [...new Set(apiPayloads)].slice(0, 20);
+        const payloadScript = `<script type="application/json" id="__SCRAPER_API_PAYLOADS__">${JSON.stringify(uniquePayloads)}</script>`;
+        html += payloadScript;
+        console.log(`[Browser V2] ✅ Appended ${uniquePayloads.length} API payload(s) to HTML`);
       }
       
       await browser.close();
