@@ -14,10 +14,12 @@ export class BrowserScraperV2 implements ScraperTransport {
     try {
       console.log(`[Browser V2] Launching browser for: ${url}`);
       
+      const executablePath = Deno.env.get('PUPPETEER_EXECUTABLE_PATH');
+
       // Launch with maximum stealth
       browser = await puppeteer.launch({
-        headless: false,
-        executablePath: '/Users/riyan/.cache/puppeteer/chrome/mac_arm-145.0.7632.67/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+        headless: Deno.env.get('PUPPETEER_HEADLESS') !== 'false',
+        executablePath: executablePath || undefined,
         args: [
           '--no-sandbox',
           '--disable-blink-features=AutomationControlled',
@@ -65,15 +67,42 @@ export class BrowserScraperV2 implements ScraperTransport {
       console.log(`[Browser V2] Navigating...`);
       
       const timeout = options?.timeout || 20000;
+      const targetHost = new URL(url).host;
+      const apiSignalPattern = /(\"price\"|\"final_price\"|\"special_price\"|\"product\"|\"products\"|\"items\"|\"hits\"|\"sku\")/i;
+      const apiUrlPattern = /(search|products|product|catalog|graphql|query|listing|list|items)/i;
       let html = '';
+      const apiPayloads: Array<{ url: string; payload: string }> = [];
+      let domProducts: Array<{ name: string; price: number; url?: string }> = [];
       
       page.on('response', async (response) => {
         try {
           const respUrl = response.url();
+          const contentType = response.headers()['content-type'] || '';
+
+          if (contentType.includes('json') || apiUrlPattern.test(respUrl)) {
+            const payload = await response.text();
+
+            // Keep payloads that look like search/product APIs OR mention pricing keys.
+            if (
+              payload.length > 30 &&
+              (apiSignalPattern.test(payload) || apiUrlPattern.test(respUrl))
+            ) {
+              apiPayloads.push({ url: respUrl, payload });
+              console.log(`[Browser V2] 📦 Captured API payload from: ${respUrl}`);
+            }
+          }
           
-          if (respUrl.includes('jarir.com') && html === '') {
-            const contentType = response.headers()['content-type'] || '';
-            
+          let responseHost = '';
+          try {
+            responseHost = new URL(respUrl).host;
+          } catch {
+            responseHost = '';
+          }
+
+          const sameTargetHost = responseHost === targetHost;
+          const isJarirFamilyHost = targetHost.includes('jarir.com') && respUrl.includes('jarir.com');
+
+          if ((sameTargetHost || isJarirFamilyHost) && html === '') {
             if (contentType.includes('text/html')) {
               const text = await response.text();
               if (text && text.length > 1000) {
@@ -98,6 +127,32 @@ export class BrowserScraperV2 implements ScraperTransport {
           navError instanceof Error ? navError.message : navError);
       }
       
+      try {
+        await page.waitForNetworkIdle({ idleTime: 1200, timeout: Math.min(timeout, 12000) });
+        console.log('[Browser V2] ✅ Network became idle');
+      } catch (_e) {
+        console.log('[Browser V2] ⚠️ Network idle wait timed out');
+      }
+
+      if (options?.waitForSelector) {
+        try {
+          await page.waitForSelector(options.waitForSelector, { timeout: Math.min(timeout, 10000) });
+          console.log(`[Browser V2] ✅ waitForSelector matched: ${options.waitForSelector}`);
+        } catch (_e) {
+          console.log(`[Browser V2] ⚠️ waitForSelector timed out: ${options.waitForSelector}`);
+        }
+      }
+
+      try {
+        await page.evaluate(async () => {
+          window.scrollTo(0, document.body.scrollHeight);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          window.scrollTo(0, 0);
+        });
+      } catch (_e) {
+        // Ignore scroll failures
+      }
+
       // WAIT FOR PRODUCT DATA TO LOAD
       console.log(`[Browser V2] Waiting for JavaScript to populate product data...`);
       
@@ -131,12 +186,13 @@ export class BrowserScraperV2 implements ScraperTransport {
       console.log(`[Browser V2] Getting final HTML...`);
       
       // Wait extra time for any remaining JS
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      const additionalWait = options?.additionalWait ?? 3000;
+      await new Promise(resolve => setTimeout(resolve, additionalWait));
       
       // FORCE getting fresh DOM (not cached response)
       try {
-        const freshHtml = await page.evaluate(() => document.documentElement.outerHTML);
-        
+        const freshHtml = await page.content();
+
         if (freshHtml && freshHtml.length > html.length) {
           html = freshHtml;
           console.log(`[Browser V2] ✅ Got FRESH HTML with JS updates (${html.length} chars)`);
@@ -145,6 +201,103 @@ export class BrowserScraperV2 implements ScraperTransport {
         }
       } catch (e) {
         console.log(`[Browser V2] ⚠️ Using cached HTML`);
+      }
+
+      try {
+        domProducts = await page.evaluate(() => {
+          const productNodes = Array.from(
+            document.querySelectorAll(
+              '[data-price-amount], .product-item, .product-item-info, [class*="product"], a[href*="/p/"]'
+            )
+          );
+
+          const parsed: Array<{ name: string; price: number; url?: string }> = [];
+
+          for (const node of productNodes.slice(0, 250)) {
+            const block = node instanceof HTMLElement ? node : (node.parentElement as HTMLElement | null);
+            if (!block) {
+              continue;
+            }
+
+            const nameEl =
+              block.querySelector('a.product-item-link') ||
+              block.querySelector('[class*="product-name"] a') ||
+              block.querySelector('a[href*="/p/"]') ||
+              block.querySelector('a[href*="product"]');
+
+            const priceEl =
+              block.querySelector('[data-price-amount]') ||
+              block.querySelector('[class*="price"]') ||
+              block.querySelector('span.price');
+
+            const name = (nameEl?.textContent || '').replace(/\s+/g, ' ').trim();
+            const href = (nameEl as HTMLAnchorElement | null)?.href;
+            const rawPrice =
+              (priceEl as HTMLElement | null)?.getAttribute?.('data-price-amount') ||
+              priceEl?.textContent ||
+              '';
+
+            const numeric = parseFloat(String(rawPrice).replace(/[^0-9.]/g, ''));
+            if (!name || name.length < 4 || isNaN(numeric) || numeric <= 0) {
+              continue;
+            }
+
+            parsed.push({
+              name,
+              price: numeric,
+              url: href || undefined,
+            });
+          }
+
+          const dedup = new Map<string, { name: string; price: number; url?: string }>();
+          for (const item of parsed) {
+            const key = `${item.name.toLowerCase()}::${item.price}`;
+            if (!dedup.has(key)) {
+              dedup.set(key, item);
+            }
+          }
+
+          return [...dedup.values()].slice(0, 80);
+        });
+
+        if (domProducts.length > 0) {
+          console.log(`[Browser V2] ✅ Extracted ${domProducts.length} product candidate(s) directly from DOM`);
+        }
+      } catch (_e) {
+        // Ignore DOM extraction failures
+      }
+
+      let resourceUrls: string[] = [];
+      try {
+        resourceUrls = await page.evaluate(() =>
+          performance
+            .getEntriesByType('resource')
+            .map((entry) => entry.name)
+            .filter((name) => /jarir|catalog|search|product|graphql|api/i.test(name))
+            .slice(-200)
+        );
+      } catch (_e) {
+        // Ignore performance entry extraction failures
+      }
+
+      if (apiPayloads.length > 0) {
+        const uniquePayloads = [...new Map(apiPayloads.map((item) => [`${item.url}::${item.payload.length}`, item])).values()].slice(0, 40);
+        const payloadScript = `<script type="application/json" id="__SCRAPER_API_PAYLOADS__">${JSON.stringify(uniquePayloads)}</script>`;
+        const endpointScript = `<script type="application/json" id="__SCRAPER_API_ENDPOINTS__">${JSON.stringify(uniquePayloads.map((item) => item.url))}</script>`;
+        html += payloadScript + endpointScript;
+        console.log(`[Browser V2] ✅ Appended ${uniquePayloads.length} API payload(s) to HTML`);
+      }
+
+      if (resourceUrls.length > 0) {
+        const resourceScript = `<script type="application/json" id="__SCRAPER_RESOURCE_URLS__">${JSON.stringify(resourceUrls)}</script>`;
+        html += resourceScript;
+        console.log(`[Browser V2] ✅ Appended ${resourceUrls.length} resource URL(s)`);
+      }
+
+      if (domProducts.length > 0) {
+        const domProductsScript = `<script type="application/json" id="__SCRAPER_DOM_PRODUCTS__">${JSON.stringify(domProducts)}</script>`;
+        html += domProductsScript;
+        console.log(`[Browser V2] ✅ Appended ${domProducts.length} DOM product candidate(s)`);
       }
       
       await browser.close();

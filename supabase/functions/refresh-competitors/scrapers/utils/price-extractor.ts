@@ -281,6 +281,170 @@ export class PriceExtractor {
     return 'unknown';
   }
   
+
+
+  /**
+   * Extract products captured directly from live DOM by BrowserScraperV2.
+   */
+  static extractFromEmbeddedDomProducts(html: string, marketplace: string): ScrapedProduct[] {
+    try {
+      const domMatch = html.match(/<script[^>]*id=["']__SCRAPER_DOM_PRODUCTS__["'][^>]*>([\s\S]*?)<\/script>/i);
+      if (!domMatch?.[1]) {
+        return [];
+      }
+
+      const rawItems = JSON.parse(domMatch[1]) as Array<{ name?: string; price?: number; url?: string }>;
+      const products: ScrapedProduct[] = [];
+
+      for (const item of rawItems.slice(0, 80)) {
+        const name = (item.name || '').trim();
+        const price = Number(item.price);
+
+        if (!name || name.length < 4 || !isFinite(price) || price <= 0) {
+          continue;
+        }
+
+        products.push({
+          name,
+          price,
+          currency: 'SAR',
+          url: item.url,
+          marketplace,
+          extractionMethod: 'css-selector',
+        });
+      }
+
+      const dedup = new Map<string, ScrapedProduct>();
+      for (const product of products) {
+        const key = `${product.name.toLowerCase()}::${product.price}`;
+        if (!dedup.has(key)) {
+          dedup.set(key, product);
+        }
+      }
+
+      return [...dedup.values()];
+    } catch (error) {
+      console.error('[Price Extractor] Error parsing embedded DOM products:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Extract product candidates from API payloads embedded by BrowserScraperV2.
+   * BrowserScraperV2 appends JSON responses in #__SCRAPER_API_PAYLOADS__.
+   */
+  static extractFromEmbeddedApiPayloads(html: string, marketplace: string): ScrapedProduct[] {
+    const products: ScrapedProduct[] = [];
+
+    try {
+      const payloadMatch = html.match(/<script[^>]*id=["']__SCRAPER_API_PAYLOADS__["'][^>]*>([\s\S]*?)<\/script>/i);
+      if (!payloadMatch?.[1]) {
+        return products;
+      }
+
+      const payloadItems = JSON.parse(payloadMatch[1]) as Array<string | { url?: string; payload?: string }>;
+
+      for (const item of payloadItems.slice(0, 40)) {
+        const payload = typeof item === 'string' ? item : item?.payload;
+        if (!payload || payload.length < 2) {
+          continue;
+        }
+
+        try {
+          const data = JSON.parse(payload);
+          this.collectProductsFromApiObject(data, marketplace, products);
+        } catch {
+          // Ignore payloads that are not valid JSON.
+        }
+      }
+
+      // Fallback: inspect JSON script blocks directly in HTML (e.g., app state blobs).
+      const scriptJsonBlocks = html.match(/<script[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi) || [];
+      for (const block of scriptJsonBlocks.slice(0, 30)) {
+        try {
+          const jsonText = block.replace(/<script[^>]*>/i, '').replace(/<\/script>/i, '').trim();
+          if (jsonText.length < 5) {
+            continue;
+          }
+          const data = JSON.parse(jsonText);
+          this.collectProductsFromApiObject(data, marketplace, products);
+        } catch {
+          // Ignore non-JSON script blocks.
+        }
+      }
+
+      // Deduplicate by name+price to avoid noisy payload repetitions.
+      const deduped = new Map<string, ScrapedProduct>();
+      for (const product of products) {
+        const key = `${product.name.toLowerCase()}::${product.price}`;
+        if (!deduped.has(key)) {
+          deduped.set(key, product);
+        }
+      }
+
+      return [...deduped.values()];
+    } catch (error) {
+      console.error('[Price Extractor] Error parsing embedded API payloads:', error);
+      return [];
+    }
+  }
+
+  private static collectProductsFromApiObject(
+    value: unknown,
+    marketplace: string,
+    output: ScrapedProduct[]
+  ): void {
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        this.collectProductsFromApiObject(item, marketplace, output);
+      }
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    const nameCandidate =
+      record.name ||
+      record.title ||
+      record.product_name ||
+      record.productName ||
+      record.display_name ||
+      record.label;
+
+    const priceCandidate =
+      record.price ??
+      record.final_price ??
+      record.special_price ??
+      record.sale_price ??
+      record.regular_price ??
+      record.min_price ??
+      record.max_price ??
+      record.amount ??
+      record.value;
+
+    if (typeof nameCandidate === 'string' && nameCandidate.trim().length > 2 && priceCandidate !== undefined) {
+      const numericPrice = parseFloat(String(priceCandidate).replace(/[^0-9.]/g, ''));
+      if (!isNaN(numericPrice) && numericPrice > 0) {
+        output.push({
+          name: nameCandidate.trim(),
+          price: numericPrice,
+          currency: typeof record.currency === 'string' ? record.currency : 'SAR',
+          marketplace,
+          extractionMethod: 'api',
+        });
+      }
+    }
+
+    for (const nested of Object.values(record)) {
+      if (nested && typeof nested === 'object') {
+        this.collectProductsFromApiObject(nested, marketplace, output);
+      }
+    }
+  }
+
   /**
    * Validate scraped price is reasonable
    */
